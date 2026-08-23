@@ -1,0 +1,46 @@
+# Drives the auction rollover when Vercel Cron is not available.
+#
+# Vercel's Hobby plan limits cron to once per day, which is useless for an
+# hourly auction, and a per-minute `crons` entry in vercel.json makes the
+# deployment fail outright. This workflow is the portable fallback.
+#
+# Honest limitation: GitHub's scheduled workflows have a five-minute minimum
+# and are routinely delayed by ten minutes or more when the platform is busy.
+# `runRollover` is idempotent and catches up on every hour it missed, so a late
+# run is not corrupting -- but a winner's five-minute payment window can be
+# measured late. If this auction handles real money at any volume, move to
+# Vercel Cron on Pro (see README) and delete this file.
+name: Auction rollover
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+# Never let two rollover runs overlap.
+concurrency:
+  group: auction-rollover
+  cancel-in-progress: false
+
+jobs:
+  rollover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger rollover
+        env:
+          SITE_ORIGIN: ${{ secrets.SITE_ORIGIN }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SITE_ORIGIN:-}" ] || [ -z "${CRON_SECRET:-}" ]; then
+            echo "::error::SITE_ORIGIN and CRON_SECRET must be set as repository secrets."
+            exit 1
+          fi
+          # --fail-with-body so a non-2xx is a failed run, not a silent success.
+          # The secret goes in a header, never in the URL, so it stays out of
+          # logs and out of any intermediary's access log.
+          curl --fail-with-body --silent --show-error \
+               --max-time 60 \
+               -H "Authorization: Bearer ${CRON_SECRET}" \
+               "${SITE_ORIGIN}/api/cron/rollover"
