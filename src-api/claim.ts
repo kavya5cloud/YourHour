@@ -1,13 +1,12 @@
 /**
- * POST /api/claim  { hourId, name, message, link, logo?, email? }
+ * POST /api/claim  { amount, name, message, link, logo?, email? }
  *
- * Buy one specific hour outright and get back a Polar checkout URL.
+ * Buy a slot for whatever you want to pay, and get back a Polar checkout URL.
  *
- * This replaces bidding. The price of an hour is a function of how soon it is
- * (`priceForHour`), so paying more buys a sooner slot without anyone being
- * displaced -- which is what lets this flow work with no outbound email at all.
- * The buyer learns their hour at the moment they pay, on Polar's own
- * confirmation page, so nothing ever has to be sent to them afterwards.
+ * No hour is named here. Everyone who pays airs eventually; the paid pool is
+ * ranked by amount, so paying more only moves you sooner, never decides whether
+ * you get on at all. Because nobody is ever left with nothing, no buyer has to
+ * be told to act, which is what keeps this flow free of outbound email.
  *
  * No email is required to reach checkout: Polar collects one itself. An address
  * is still accepted and stored when offered, because it is what lets a buyer
@@ -35,8 +34,9 @@ import {
   validateLinkUrl,
   validateLogo,
   validateTagline,
+  validateBidDollars,
 } from '../lib/validate.ts';
-import { claimHour, releaseClaim } from '../lib/auction.ts';
+import { purchase, releaseClaim } from '../lib/auction.ts';
 import { fetchLogoForLink } from '../lib/logo.ts';
 import { createCheckout } from '../lib/polar.ts';
 import { audit } from '../lib/audit.ts';
@@ -74,17 +74,16 @@ export default withErrorHandling(async function handler(req: ApiRequest, res: Ap
   const buyer = await resolveBuyer(req, body);
   await enforce('claim:user', buyer.id, env.limits.bidsPerUserPerHour, 3600, 'You are going too quickly.');
 
-  const hourId = Number(body.hourId);
-  if (!Number.isInteger(hourId)) throw badRequest('Pick an hour to claim.', 'hour_required');
+  const amountCents = validateBidDollars(body.amount);
 
   const displayName = validateDisplayName(body.name);
   const tagline = validateTagline(body.message);
   const linkUrl = validateLinkUrl(body.link);
   const logoDataUrl = validateLogo(body.logo) ?? (await fetchLogoForLink(linkUrl));
 
-  // Reserves the hour and opens a pending payment. Throws 409 if it is taken.
-  const claim = await claimHour({
-    hourId,
+  // Records the purchase and opens a pending payment. No hour is taken yet.
+  const claim = await purchase({
+    amountCents,
     userId: buyer.id,
     displayName,
     tagline,
@@ -98,9 +97,8 @@ export default withErrorHandling(async function handler(req: ApiRequest, res: Ap
   let checkout;
   try {
     checkout = await createCheckout({
-      amountCents: claim.priceCents,
+      amountCents: claim.amountCents,
       email: buyer.email,
-      hourId: claim.hourId,
       bidId: claim.bidId,
       paymentId: claim.paymentId,
     });
@@ -109,7 +107,7 @@ export default withErrorHandling(async function handler(req: ApiRequest, res: Ap
     await audit({
       action: 'claim.released',
       actorId: buyer.id,
-      subject: `hour:${claim.hourId}`,
+      subject: `bid:${claim.bidId}`,
       data: { reason: 'checkout_failed' },
     });
     throw error;
@@ -123,17 +121,15 @@ export default withErrorHandling(async function handler(req: ApiRequest, res: Ap
   await audit({
     action: 'claim.opened',
     actorId: buyer.id,
-    subject: `hour:${claim.hourId}`,
+    subject: `bid:${claim.bidId}`,
     ipHash,
-    data: { bidId: claim.bidId, priceCents: claim.priceCents },
+    data: { bidId: claim.bidId, amountCents: claim.amountCents },
   });
 
   sendJson(res, 201, {
     ok: true,
-    hour: claim.hourId,
-    priceCents: claim.priceCents,
+    amountCents: claim.amountCents,
     checkoutUrl: checkout.url,
-    reservedSeconds: env.auction.reservationSeconds,
     listing: { name: displayName, tagline, link: linkUrl, logo: logoDataUrl },
   });
 });

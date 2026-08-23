@@ -334,12 +334,6 @@ async function markPaid(paymentId, providerOrderId) {
     );
     const payment = rows[0];
     if (!payment) return false;
-    await lockHour(client, payment.hour_id);
-    await client.query(
-      `UPDATE hours SET status = 'owned', winning_bid_id = $1, settled_at = now()
-        WHERE id = $2 AND status IN ('open', 'awaiting_payment', 'forfeited')`,
-      [payment.bid_id, payment.hour_id]
-    );
     await client.query(`UPDATE bids SET status = 'won' WHERE id = $1`, [payment.bid_id]);
     await client.query(
       `UPDATE users SET email_verified_at = COALESCE(email_verified_at, now()) WHERE id = $1`,
@@ -348,7 +342,7 @@ async function markPaid(paymentId, providerOrderId) {
     await audit({
       action: "payment.paid",
       actorId: payment.user_id,
-      subject: `hour:${payment.hour_id}`,
+      subject: `bid:${payment.bid_id}`,
       data: { amountCents: payment.amount_cents, paymentId }
     });
     return true;

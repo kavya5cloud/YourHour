@@ -5,18 +5,18 @@ Fifty percent of net proceeds goes to charity.
 
 ## How it works
 
-1. The board shows the next 24 hours, each with a price. **An hour costs more
-   the sooner it is** -- $50 for the next hour, $25 two out, down to a $5 floor
-   about ten hours out. Paying more buys a sooner slot.
-2. You pick an hour, fill in your product, link, and an optional logo, and go
-   straight to a Polar checkout. The hour is held for you while you pay.
-3. The moment payment clears, that hour is yours. Your name, line, logo, and
-   link occupy the homepage for its full sixty minutes.
-4. If you abandon checkout, the hold lapses and the hour goes back on sale.
+1. You pay whatever you think an hour is worth. There is no fixed price and no
+   slot to choose.
+2. Everyone who has paid is ranked by amount, highest first, ties broken by who
+   paid earlier. That ranking is the running order.
+3. When an hour comes round it takes whoever is at the front, and **keeps
+   them**. An hour already on air can never be bought out from under its owner.
+4. Paying more moves you up the order. It never decides whether you get on at
+   all -- everyone who pays airs eventually.
 
-There is no bidding, so nobody is ever outbid, displaced, or refunded. That is
-deliberate: because a buyer learns their hour at the moment they pay, on Polar's
-own confirmation page, nothing ever has to be emailed to them afterwards.
+Nobody is ever outbid into getting nothing, so no buyer is ever left needing to
+be told to act. That is what lets the whole flow run without sending a single
+email: your slot may drift later if someone pays more, but it is never lost.
 
 Every one of those decisions is made server-side against the database clock.
 The browser only displays the result.
@@ -25,8 +25,9 @@ The browser only displays the result.
 
 ```
 src-api/                handler sources; `npm run build` bundles these into api/
-  state.ts              public state: current owner, and the board of hours
-  claim.ts              buy one hour, and open its Polar checkout
+  state.ts              public state: who is on air, and the running order
+  claim.ts              buy a slot, and open its Polar checkout
+  health.ts             which env vars are set; temporary, delete when healthy
   moderation.ts         review listing text before it is displayed
   auth/                 passwordless sign-in, session, sign-out
   webhooks/polar.ts     the only path that may mark an hour paid
@@ -124,16 +125,15 @@ The DB-backed suites truncate shared tables, so the test script pins
 `--test-concurrency=1`. Do not remove that without giving each suite its own
 database.
 
-### The double-sell guarantee
+### What the tests pin down
 
-Two buyers can reach `claimHour` for the same hour at the same instant. What
-stops them both succeeding is not application logic but a partial unique index:
+The guarantee that matters is that **an hour on air keeps its owner**. Ranking
+is provisional for every hour still ahead -- a bigger payer reorders them
+freely -- but the moment an hour starts it takes the front of the pool and
+holds it. `an hour that has started cannot be bumped by a bigger payer` is the
+test for exactly that.
 
-```sql
-CREATE UNIQUE INDEX bids_one_live_claim_idx
-  ON bids (hour_id) WHERE status IN ('active', 'won');
-```
-
-The loser's INSERT violates it and is turned into a 409. Drop that index and
-`concurrent claims on one hour cannot both succeed` fails, which is the point:
-the database decides, not a read-then-write that a race could interleave.
+Assignment happens lazily inside `getPublicState`, under the hour's row lock
+and with `FOR UPDATE SKIP LOCKED` on the pool, so concurrent readers cannot
+hand the same slot to two buyers and no scheduler has to be running for the
+page to be correct.

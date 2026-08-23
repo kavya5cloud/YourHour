@@ -46,7 +46,6 @@ if (!databaseUrl) {
   }) as typeof fetch;
 
   const { query } = await import('../lib/db.ts');
-  const auctionModule = await import('../lib/auction.ts');
   const stateHandler = (await import('../src-api/state.ts')).default;
   const claimHandler = (await import('../src-api/claim.ts')).default;
   const meHandler = (await import('../src-api/auth/me.ts')).default;
@@ -56,8 +55,6 @@ if (!databaseUrl) {
 
   const ORIGIN = 'https://getyourhour.test';
 
-  /** The soonest claimable hour. */
-  const nextHourId = (): number => auctionModule.hourIdAt(Date.now()) + 1;
 
   /** Mount one handler on a throwaway server and return its base URL. */
   async function serve(handler: (req: never, res: never) => Promise<void>): Promise<{ url: string; server: Server }> {
@@ -146,7 +143,7 @@ if (!databaseUrl) {
         method: 'POST',
         headers: { origin: ORIGIN, 'content-type': 'application/json' },
         body: JSON.stringify({
-          hourId: nextHourId(),
+          amount: 50,
           name: 'example.com',
           link: 'example.com',
           email: 'new@example.test',
@@ -154,7 +151,7 @@ if (!databaseUrl) {
       });
       assert.equal(response.status, 201, 'no sign-in gate on claiming');
       const body = JSON.parse(response.text);
-      assert.equal(body.priceCents, 5000, 'the next hour is priced at the base');
+      assert.equal(body.amountCents, 5000, 'the amount they chose');
       assert.ok(body.checkoutUrl.startsWith('https://'), 'a checkout URL comes back');
     } finally {
       server.close();
@@ -168,7 +165,7 @@ if (!databaseUrl) {
       const response = await call(`${url}/api/claim`, {
         method: 'POST',
         headers: { origin: ORIGIN, 'content-type': 'application/json' },
-        body: JSON.stringify({ hourId: nextHourId(), name: 'example.com', link: 'example.com' }),
+        body: JSON.stringify({ amount: 50, name: 'example.com', link: 'example.com' }),
       });
       assert.equal(response.status, 400);
       assert.match(JSON.parse(response.text).message, /email/i);
@@ -185,7 +182,7 @@ if (!databaseUrl) {
         method: 'POST',
         headers: { origin: ORIGIN, 'content-type': 'application/json' },
         body: JSON.stringify({
-          hourId: nextHourId(),
+          amount: 50,
           name: 'example.com',
           email: 'nolink@example.test',
         }),
@@ -197,28 +194,21 @@ if (!databaseUrl) {
     }
   });
 
-  test('claiming an hour that is already taken is a clean conflict', async () => {
+  test('two buyers can purchase at once; nothing is exclusive', async () => {
     await reset();
     const { url, server } = await serve(claimHandler);
     try {
-      const hourId = nextHourId();
-      const body = (email: string): string =>
-        JSON.stringify({ hourId, name: 'example.com', link: 'example.com', email });
+      const body = (email: string, amount: number): string =>
+        JSON.stringify({ amount, name: 'example.com', link: 'example.com', email });
 
-      const first = await call(`${url}/api/claim`, {
-        method: 'POST',
-        headers: { origin: ORIGIN, 'content-type': 'application/json' },
-        body: body('one@example.test'),
-      });
-      assert.equal(first.status, 201);
-
-      const second = await call(`${url}/api/claim`, {
-        method: 'POST',
-        headers: { origin: ORIGIN, 'content-type': 'application/json' },
-        body: body('two@example.test'),
-      });
-      assert.equal(second.status, 409, 'the hour is not sold twice');
-      assert.equal(JSON.parse(second.text).error, 'hour_taken');
+      for (const [email, amount] of [['one@example.test', 10], ['two@example.test', 20]] as const) {
+        const response = await call(`${url}/api/claim`, {
+          method: 'POST',
+          headers: { origin: ORIGIN, 'content-type': 'application/json' },
+          body: body(email, amount),
+        });
+        assert.equal(response.status, 201, 'nobody is turned away for buying');
+      }
     } finally {
       server.close();
     }
@@ -231,7 +221,7 @@ if (!databaseUrl) {
       const response = await call(`${url}/api/claim`, {
         method: 'POST',
         headers: { origin: 'https://evil.example', 'content-type': 'application/json' },
-        body: JSON.stringify({ hourId: nextHourId(), name: 'example.com', link: 'example.com' }),
+        body: JSON.stringify({ amount: 50, name: 'example.com', link: 'example.com' }),
       });
       assert.equal(response.status, 403);
       assert.match(JSON.parse(response.text).message, /Cross-origin/);

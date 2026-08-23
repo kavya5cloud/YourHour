@@ -26,10 +26,6 @@ const state = {
   clockOffset: 0,
   currentEndsAt: 0,
   hourStartedAt: 0,
-  /** The hour the visitor has picked off the board, if any. */
-  chosenHour: null,
-  /** The last state payload, so the submit button can be re-synced on click. */
-  lastState: null,
   polling: null,
 };
 
@@ -142,58 +138,45 @@ function showOwnerLogo(logo, fallbackInitial) {
 }
 
 /**
- * The board of hours on sale.
+ * The running order.
  *
- * Rendered from the server's `board`, never computed here: the price of an hour
- * and whether it is still free are both decisions the server owns, and a page
- * that guessed them would show someone a price they cannot actually pay.
+ * Rendered straight from the server's projection, never computed here: who airs
+ * next depends on every other purchase, which the browser cannot know. It is
+ * provisional by nature -- a bigger payer arriving reorders everything below
+ * the hour that is currently on air.
  */
-function renderBoard(data) {
-  const board = $('board');
-  const chosen = state.chosenHour;
-  board.replaceChildren();
+function renderQueue(data) {
+  const list = $('queue');
+  list.replaceChildren();
 
-  for (const slot of data.board) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'slot';
-    button.setAttribute('role', 'radio');
-    button.dataset.hour = String(slot.hour);
-    button.disabled = slot.taken;
-    button.setAttribute('aria-checked', String(slot.hour === chosen));
-    if (slot.hour === chosen) button.classList.add('chosen');
-    if (slot.taken) button.classList.add('taken');
-
-    const when = document.createElement('b');
-    when.textContent = new Date(slot.startsAt).toLocaleTimeString([], {
-      hour: 'numeric',
-      minute: '2-digit',
-    });
-    const price = document.createElement('span');
-    price.textContent = slot.taken ? 'Taken' : money(slot.priceCents);
-    button.append(when, price);
-    board.append(button);
+  if (data.queue.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'queue-empty';
+    empty.textContent = 'Nobody is waiting. Pay anything and you are next up.';
+    list.append(empty);
+  } else {
+    for (const entry of data.queue) {
+      const row = document.createElement('div');
+      row.className = 'queue-row';
+      const position = document.createElement('span');
+      position.className = 'queue-pos';
+      position.textContent = entry.position === 1 ? 'Next' : `#${entry.position}`;
+      const name = document.createElement('b');
+      name.textContent = entry.name;
+      const paid = document.createElement('span');
+      paid.className = 'queue-paid';
+      paid.textContent = money(entry.amountCents);
+      row.append(position, name, paid);
+      list.append(row);
+    }
   }
 
-  // A chosen hour that someone else just bought has to be given up.
-  if (chosen && !data.board.some((slot) => slot.hour === chosen && !slot.taken)) {
-    state.chosenHour = null;
-    setText($('form-message'), 'That hour was just taken. Pick another.');
-  }
-  syncClaimButton(data);
-}
-
-/** Keep the submit button's label and enabled state tied to the chosen hour. */
-function syncClaimButton(data) {
-  const button = $('claim-submit');
-  const slot = data?.board.find((entry) => entry.hour === state.chosenHour);
-  if (!slot) {
-    button.disabled = true;
-    setText(button, 'Pick an hour first');
-    return;
-  }
-  button.disabled = false;
-  setText(button, `Claim this hour — ${money(slot.priceCents)}`);
+  setText(
+    $('front-hint'),
+    data.queue.length === 0
+      ? 'anything gets you next'
+      : `${money(data.frontOfQueueCents)} to go first`,
+  );
 }
 
 function renderArchive(data) {
@@ -245,9 +228,8 @@ async function refresh() {
   try {
     const data = await api('/api/state');
     state.clockOffset = new Date(data.serverTime).getTime() - Date.now();
-    state.lastState = data;
     renderOwner(data);
-    renderBoard(data);
+    renderQueue(data);
     renderArchive(data);
     tickClock();
   } catch {
@@ -293,31 +275,12 @@ $('message')?.addEventListener('input', (event) => {
 });
 
 /**
- * Choosing an hour.
+ * Buy a slot.
  *
- * Delegated from the board container so it keeps working across re-renders --
- * the board is rebuilt on every poll, and per-button listeners would be lost.
- */
-$('board')?.addEventListener('click', (event) => {
-  const button = event.target.closest('.slot');
-  if (!button || button.disabled) return;
-  state.chosenHour = Number(button.dataset.hour);
-  setText($('form-message'), '');
-  for (const slot of $('board').querySelectorAll('.slot')) {
-    const chosen = slot === button;
-    slot.classList.toggle('chosen', chosen);
-    slot.setAttribute('aria-checked', String(chosen));
-  }
-  syncClaimButton(state.lastState);
-});
-
-/**
- * Claim the chosen hour.
- *
- * On success the server has reserved the hour and opened a Polar checkout, and
- * the only thing left is to send the buyer there. Everything after that point
- * -- taking the money, confirming the hour -- happens through the signed
- * webhook, never through the browser coming back to a success URL.
+ * On success the server has recorded the purchase and opened a Polar checkout,
+ * and all that is left is to send the buyer there. Nothing is held until they
+ * actually pay: the purchase joins the running order only when the signed
+ * webhook confirms it.
  */
 $('claim-form')?.addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -325,8 +288,10 @@ $('claim-form')?.addEventListener('submit', async (event) => {
   const button = $('claim-submit');
   setText(message, '');
 
-  if (!state.chosenHour) {
-    setText(message, 'Pick an hour first.');
+  const amount = Number.parseInt($('amount').value, 10);
+  if (!Number.isInteger(amount) || amount <= 0) {
+    setText(message, 'Enter a whole-dollar amount.');
+    $('amount').focus();
     return;
   }
 
@@ -337,7 +302,7 @@ $('claim-form')?.addEventListener('submit', async (event) => {
     const result = await api('/api/claim', {
       method: 'POST',
       body: {
-        hourId: state.chosenHour,
+        amount,
         name: $('name').value.trim(),
         link: $('link').value,
         message: $('message').value,
@@ -351,9 +316,6 @@ $('claim-form')?.addEventListener('submit', async (event) => {
     setText(message, error.message);
     button.disabled = false;
     setText(button, original);
-    // A taken hour means the board is stale; refresh it so they can see what
-    // is actually still free.
-    void refresh();
   }
 });
 

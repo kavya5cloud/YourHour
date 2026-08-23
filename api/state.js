@@ -196,6 +196,26 @@ function getPool() {
 async function query(text, params = []) {
   return getPool().query(text, params);
 }
+async function tx(fn) {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`SET LOCAL lock_timeout = '5s'`);
+    await client.query(`SET LOCAL idle_in_transaction_session_timeout = '15s'`);
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch (rollbackError) {
+      console.error("rollback failed", { message: rollbackError.message });
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 
 // lib/auction.ts
 var HOUR_MS = 36e5;
@@ -217,7 +237,27 @@ function splitProceeds(amountCents) {
   const charityCents = Math.floor(netCents * env.auction.charityBasisPoints / 1e4);
   return { amountCents, feeCents, netCents, charityCents };
 }
+async function ensureHour(client, hourId) {
+  const runner = client ? client.query.bind(client) : query;
+  const startsAt = hourStartsAt(hourId);
+  await runner(
+    `INSERT INTO hours (id, starts_at, ends_at, status)
+     VALUES ($1, $2, $3, 'open')
+     ON CONFLICT (id) DO NOTHING`,
+    [hourId, startsAt, new Date(startsAt.getTime() + HOUR_MS)]
+  );
+}
+async function lockHour(client, hourId) {
+  await ensureHour(client, hourId);
+  const { rows } = await client.query(`SELECT id, status, starts_at, ends_at, winning_bid_id FROM hours WHERE id = $1 FOR UPDATE`, [hourId]);
+  const row = rows[0];
+  if (!row) throw new Error(`Hour ${hourId} vanished after insert`);
+  return row;
+}
 async function getPublicState() {
+  await settleDueHours();
+  const queue = await projectedQueue();
+  const frontOfQueueCents = (queue[0]?.amountCents ?? 0) + env.auction.minIncrementCents;
   const now = Date.now();
   const currentId = hourIdAt(now);
   const nextId = currentId + 1;
@@ -258,26 +298,9 @@ async function getPublicState() {
   const leadRow = lead.rows[0];
   const raisedCents = Number.parseInt(totals.rows[0]?.raised ?? "0", 10) || 0;
   const display = (value, moderation) => moderation === "approved" ? value ?? "" : UNDER_REVIEW;
-  const horizon = env.auction.claimHorizonHours;
-  const { rows: takenRows } = await query(
-    `SELECT hour_id FROM bids
-      WHERE status IN ('active', 'won')
-        AND (reserved_until IS NULL OR reserved_until > now())
-        AND hour_id > $1 AND hour_id <= $2`,
-    [currentId, currentId + horizon]
-  );
-  const taken = new Set(takenRows.map((row) => row.hour_id));
-  const board = Array.from({ length: horizon }, (_, index) => {
-    const hour = currentId + index + 1;
-    return {
-      hour,
-      startsAt: hourStartsAt(hour).toISOString(),
-      priceCents: priceForHour(hour, now),
-      taken: taken.has(hour)
-    };
-  });
   return {
-    board,
+    queue,
+    frontOfQueueCents,
     serverTime: new Date(now).toISOString(),
     currentHour: {
       id: currentId,
@@ -310,12 +333,60 @@ async function getPublicState() {
     }
   };
 }
-function priceForHour(hourId, now = Date.now()) {
+async function settleDueHours(now = Date.now()) {
   const currentId = hourIdAt(now);
-  const hoursAway = hourId - currentId;
-  if (hoursAway < 1) return 0;
-  const { claimBaseCents, claimFloorCents } = env.auction;
-  return Math.max(claimFloorCents, Math.round(claimBaseCents / hoursAway));
+  const settled = [];
+  const { rows: due } = await query(
+    `SELECT id FROM hours
+      WHERE starts_at <= now() AND winning_bid_id IS NULL AND status = 'open'
+      ORDER BY id ASC LIMIT 24`
+  );
+  for (const hour of [...due.map((row) => row.id), currentId]) {
+    const assigned = await tx(async (client) => {
+      await ensureHour(client, hour);
+      const locked = await lockHour(client, hour);
+      if (locked.winning_bid_id !== null) return false;
+      if (hourStartsAt(hour).getTime() > now) return false;
+      const { rows } = await client.query(
+        `SELECT id FROM bids
+          WHERE status = 'won' AND hour_id IS NULL
+          ORDER BY amount_cents DESC, created_at ASC
+          LIMIT 1
+          FOR UPDATE SKIP LOCKED`
+      );
+      const top = rows[0];
+      if (!top) {
+        await client.query(
+          `UPDATE hours SET status = 'unsold', settled_at = now() WHERE id = $1 AND status = 'open'`,
+          [hour]
+        );
+        return false;
+      }
+      await client.query(`UPDATE bids SET hour_id = $1 WHERE id = $2`, [hour, top.id]);
+      await client.query(
+        `UPDATE hours SET status = 'owned', winning_bid_id = $1, settled_at = now() WHERE id = $2`,
+        [top.id, hour]
+      );
+      await client.query(`UPDATE payments SET hour_id = $1 WHERE bid_id = $2`, [hour, top.id]);
+      return true;
+    });
+    if (assigned) settled.push(hour);
+  }
+  return settled;
+}
+async function projectedQueue(limit = 12) {
+  const { rows } = await query(
+    `SELECT display_name, amount_cents, moderation FROM bids
+      WHERE status = 'won' AND hour_id IS NULL
+      ORDER BY amount_cents DESC, created_at ASC
+      LIMIT $1`,
+    [limit]
+  );
+  return rows.map((row, index) => ({
+    position: index + 1,
+    name: row.moderation === "approved" ? row.display_name : UNDER_REVIEW,
+    amountCents: row.amount_cents
+  }));
 }
 
 // src-api/state.ts

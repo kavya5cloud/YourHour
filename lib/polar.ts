@@ -23,7 +23,6 @@ export interface CheckoutSession {
 export async function createCheckout(options: {
   amountCents: number;
   email: string;
-  hourId: number;
   bidId: string;
   paymentId: string;
 }): Promise<CheckoutSession> {
@@ -39,7 +38,6 @@ export async function createCheckout(options: {
       customer_email: options.email,
       success_url: `${env.siteOrigin}/?paid=1`,
       metadata: {
-        hour_id: String(options.hourId),
         bid_id: options.bidId,
         payment_id: options.paymentId,
       },

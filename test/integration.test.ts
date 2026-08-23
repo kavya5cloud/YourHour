@@ -46,9 +46,9 @@ if (!databaseUrl) {
   const { query, tx } = await import('../lib/db.ts');
   const auction = await import('../lib/auction.ts');
   const {
-    claimHour,
-    releaseExpiredClaims,
-    priceForHour,
+    purchase,
+    settleDueHours,
+    projectedQueue,
     runRollover,
     markPaid,
     getPublicState,
@@ -104,163 +104,145 @@ if (!databaseUrl) {
     return hourId;
   }
 
-  test('claiming an hour reserves it and prices it by how soon it is', async () => {
+  /** Buy and immediately confirm payment, so the purchase joins the pool. */
+  async function buy(email: string, dollars: number): Promise<string> {
+    const userId = await makeUser(email);
+    const result = await purchase({ amountCents: dollars * 100, userId, ...listing });
+    await markPaid(result.paymentId, `order_${email}`);
+    return result.bidId;
+  }
+
+  test('a purchase takes no hour until one comes round', async () => {
     await reset();
-    const user = await makeUser('buyer@example.test');
-    const hourId = await commitNextHourRow();
+    const userId = await makeUser('buyer@example.test');
+    const result = await purchase({ amountCents: 5000, userId, ...listing });
 
-    const claim = await claimHour({ hourId, userId: user, ...listing });
-    // The next hour is the dearest: base price undivided.
-    assert.equal(claim.priceCents, 5000);
-    assert.equal(claim.hourId, hourId);
-
-    const state = await getPublicState();
-    const slot = state.board.find((entry) => entry.hour === hourId);
-    assert.equal(slot?.taken, true, 'a reserved hour is off the board immediately');
-  });
-
-  test('price falls the further out the hour is', async () => {
-    const now = Date.now();
-    const current = hourIdAt(now);
-    assert.equal(priceForHour(current + 1, now), 5000);
-    assert.equal(priceForHour(current + 2, now), 2500);
-    assert.equal(priceForHour(current + 10, now), 500, 'floors out');
-    assert.equal(priceForHour(current + 100, now), 500, 'stays at the floor');
-    assert.equal(priceForHour(current, now), 0, 'the running hour is not for sale');
-  });
-
-  test('an hour that is already claimed cannot be claimed again', async () => {
-    await reset();
-    const first = await makeUser('first@example.test');
-    const second = await makeUser('second@example.test');
-    const hourId = await commitNextHourRow();
-
-    await claimHour({ hourId, userId: first, ...listing });
-    await assert.rejects(
-      () => claimHour({ hourId, userId: second, ...listing }),
-      /just taken/i,
-      'the second buyer is turned away, not given the same hour',
+    const { rows } = await query<{ hour_id: number | null; status: string }>(
+      `SELECT hour_id, status FROM bids WHERE id = $1`,
+      [result.bidId],
     );
+    assert.equal(rows[0]!.hour_id, null, 'no hour is reserved at purchase time');
+    assert.equal(rows[0]!.status, 'active', 'unpaid purchases are not in the pool');
+  });
+
+  test('the queue ranks by amount, and ties go to whoever paid first', async () => {
+    await reset();
+    await buy('small@example.test', 5);
+    await buy('big@example.test', 50);
+    await buy('mid@example.test', 20);
+
+    const queue = await projectedQueue();
+    assert.deepEqual(
+      queue.map((entry) => entry.amountCents),
+      [5000, 2000, 500],
+      'highest payer is first in line',
+    );
+  });
+
+  test('paying more moves you ahead of people who bought earlier', async () => {
+    await reset();
+    await buy('early@example.test', 10);
+    let queue = await projectedQueue();
+    assert.equal(queue[0]!.amountCents, 1000);
+
+    await buy('late@example.test', 40);
+    queue = await projectedQueue();
+    assert.equal(queue[0]!.amountCents, 4000, 'the bigger payer jumps the queue');
+    assert.equal(queue[1]!.amountCents, 1000, 'and nobody is dropped');
+  });
+
+  test('an unpaid purchase never enters the queue', async () => {
+    await reset();
+    const userId = await makeUser('deadbeat@example.test');
+    await purchase({ amountCents: 100_00, userId, ...listing });
+    assert.deepEqual(await projectedQueue(), [], 'paying is what puts you in line');
   });
 
   /**
-   * The double-sell guarantee.
-   *
-   * Two buyers reach `claimHour` for the same hour at the same instant. The
-   * partial unique index on live claims is what makes exactly one of them win:
-   * the loser's INSERT violates it and is turned into a 409. Without that index
-   * both would commit and two people would have paid for one hour.
+   * The point of the whole design: an hour that has started keeps its
+   * occupant. Ranking is only ever provisional for hours still ahead.
    */
-  test('concurrent claims on one hour cannot both succeed', async () => {
+  test('an hour that has started cannot be bumped by a bigger payer', async () => {
     await reset();
-    const buyers = await Promise.all([
-      makeUser('a@example.test'),
-      makeUser('b@example.test'),
-      makeUser('c@example.test'),
-    ]);
-    const hourId = await commitNextHourRow();
+    await buy('modest@example.test', 5);
 
-    const results = await Promise.allSettled(
-      buyers.map((userId) => claimHour({ hourId, userId, ...listing })),
+    const hourId = hourIdAt(Date.now());
+    const startsAt = hourStartsAt(hourId);
+    await query(
+      `INSERT INTO hours (id, starts_at, ends_at, status) VALUES ($1, $2, $3, 'open')
+       ON CONFLICT (id) DO NOTHING`,
+      [hourId, startsAt, new Date(startsAt.getTime() + HOUR_MS)],
     );
-    const won = results.filter((r) => r.status === 'fulfilled');
-    assert.equal(won.length, 1, `exactly one claim should win, got ${won.length}`);
 
+    await settleDueHours();
+    const owner = await query<{ winning_bid_id: string }>(
+      `SELECT winning_bid_id FROM hours WHERE id = $1`,
+      [hourId],
+    );
+    const locked = owner.rows[0]!.winning_bid_id;
+    assert.ok(locked, 'the hour took the top of the pool');
+
+    // Somebody far richer turns up afterwards.
+    await buy('whale@example.test', 500);
+    await settleDueHours();
+
+    const after = await query<{ winning_bid_id: string }>(
+      `SELECT winning_bid_id FROM hours WHERE id = $1`,
+      [hourId],
+    );
+    assert.equal(after.rows[0]!.winning_bid_id, locked, 'the running hour is untouched');
+  });
+
+  test('settling is idempotent and never double-books an hour', async () => {
+    await reset();
+    await buy('one@example.test', 10);
+    const hourId = hourIdAt(Date.now());
+    const startsAt = hourStartsAt(hourId);
+    await query(
+      `INSERT INTO hours (id, starts_at, ends_at, status) VALUES ($1, $2, $3, 'open')
+       ON CONFLICT (id) DO NOTHING`,
+      [hourId, startsAt, new Date(startsAt.getTime() + HOUR_MS)],
+    );
+
+    await Promise.all([settleDueHours(), settleDueHours(), settleDueHours()]);
     const { rows } = await query<{ n: string }>(
-      `SELECT count(*)::text AS n FROM bids WHERE hour_id = $1 AND status IN ('active','won')`,
+      `SELECT count(*)::text AS n FROM bids WHERE hour_id = $1`,
       [hourId],
     );
-    assert.equal(rows[0]!.n, '1', 'exactly one live claim row survives');
-  });
-
-  test('an abandoned checkout puts the hour back on sale', async () => {
-    await reset();
-    const user = await makeUser('ghost@example.test');
-    const hourId = await commitNextHourRow();
-    const claim = await claimHour({ hourId, userId: user, ...listing });
-
-    // Wind the reservation into the past, as an abandoned checkout would.
-    await query(`UPDATE bids SET reserved_until = now() - interval '1 minute' WHERE id = $1`, [
-      claim.bidId,
-    ]);
-
-    // The board frees it on read, with no scheduler involved.
-    const lazyState = await getPublicState();
-    assert.equal(
-      lazyState.board.find((entry) => entry.hour === hourId)?.taken,
-      false,
-      'an expired hold does not keep the hour off sale',
-    );
-
-    const released = await releaseExpiredClaims();
-    assert.deepEqual(released, [hourId]);
-
-    const state = await getPublicState();
-    assert.equal(
-      state.board.find((entry) => entry.hour === hourId)?.taken,
-      false,
-      'the hour is sellable again',
-    );
-
-    // And the freed hour really can be sold to somebody else.
-    const other = await makeUser('other@example.test');
-    const second = await claimHour({ hourId, userId: other, ...listing });
-    assert.equal(second.hourId, hourId);
-  });
-
-  test('a paid claim is what makes an hour owned', async () => {
-    await reset();
-    const user = await makeUser('payer@example.test');
-    const hourId = await commitNextHourRow();
-    const claim = await claimHour({ hourId, userId: user, ...listing });
-
-    const before = await query<{ status: string }>(`SELECT status FROM hours WHERE id = $1`, [hourId]);
-    assert.equal(before.rows[0]!.status, 'open', 'reserving alone does not own the hour');
-
-    assert.equal(await markPaid(claim.paymentId, 'order_1'), true);
-
-    const after = await query<{ status: string; winning_bid_id: string }>(
-      `SELECT status, winning_bid_id FROM hours WHERE id = $1`,
-      [hourId],
-    );
-    assert.equal(after.rows[0]!.status, 'owned');
-    assert.equal(after.rows[0]!.winning_bid_id, claim.bidId);
+    assert.equal(rows[0]!.n, '1', 'exactly one purchase holds the hour');
   });
 
   test('a duplicate payment confirmation is ignored', async () => {
     await reset();
-    const user = await makeUser('dupe@example.test');
-    const hourId = await commitNextHourRow();
-    const claim = await claimHour({ hourId, userId: user, ...listing });
-
-    assert.equal(await markPaid(claim.paymentId, 'order_1'), true);
-    assert.equal(await markPaid(claim.paymentId, 'order_1'), false, 'the second delivery is a no-op');
+    const userId = await makeUser('dupe@example.test');
+    const result = await purchase({ amountCents: 1000, userId, ...listing });
+    assert.equal(await markPaid(result.paymentId, 'order_1'), true);
+    assert.equal(await markPaid(result.paymentId, 'order_1'), false);
   });
 
-  test('concurrent payment confirmations credit the hour once', async () => {
+  test('concurrent payment confirmations credit a purchase once', async () => {
     await reset();
-    const user = await makeUser('race@example.test');
-    const hourId = await commitNextHourRow();
-    const claim = await claimHour({ hourId, userId: user, ...listing });
-
+    const userId = await makeUser('race@example.test');
+    const result = await purchase({ amountCents: 1000, userId, ...listing });
     const results = await Promise.all([
-      markPaid(claim.paymentId, 'order_1'),
-      markPaid(claim.paymentId, 'order_1'),
+      markPaid(result.paymentId, 'order_1'),
+      markPaid(result.paymentId, 'order_1'),
     ]);
-    assert.equal(results.filter(Boolean).length, 1, 'only one confirmation may take effect');
+    assert.equal(results.filter(Boolean).length, 1);
   });
 
-  test('an hour nobody bought closes as unsold', async () => {
+  test('an hour with nobody waiting closes as unsold', async () => {
     await reset();
     const hourId = hourIdAt(Date.now());
     const startsAt = hourStartsAt(hourId);
     await query(
-      `INSERT INTO hours (id, starts_at, ends_at, status) VALUES ($1, $2, $3, 'open')`,
+      `INSERT INTO hours (id, starts_at, ends_at, status) VALUES ($1, $2, $3, 'open')
+       ON CONFLICT (id) DO NOTHING`,
       [hourId, startsAt, new Date(startsAt.getTime() + HOUR_MS)],
     );
-
-    const report = await runRollover();
-    assert.ok(report.unsold.includes(hourId));
+    await settleDueHours();
+    const { rows } = await query<{ status: string }>(`SELECT status FROM hours WHERE id = $1`, [hourId]);
+    assert.equal(rows[0]!.status, 'unsold');
   });
 
 
