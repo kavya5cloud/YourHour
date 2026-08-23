@@ -36,7 +36,7 @@ export default withErrorHandling(async function handler(req: ApiRequest, res: Ap
 
   // Only record a run that actually changed something, so the audit log stays
   // readable instead of filling with one no-op row per minute.
-  if (report.closed.length || report.expired.length || report.promoted.length || report.unsold.length) {
+  if (report.unsold.length || report.released.length) {
     await audit({ action: 'hour.rolled', data: { ...report } });
   }
 

@@ -1,4 +1,4 @@
--- The Hour — schema.
+-- GetYourHour — schema.
 -- Money is stored as integer cents everywhere. Never floats.
 -- All timestamps are timestamptz; the database clock is the only clock that
 -- decides auction outcomes.
@@ -105,6 +105,31 @@ CREATE TABLE IF NOT EXISTS bids (
   CONSTRAINT bids_moderation_valid CHECK (moderation IN ('pending', 'approved', 'rejected'))
 );
 CREATE INDEX IF NOT EXISTS bids_hour_amount_idx ON bids (hour_id, amount_cents DESC, created_at ASC);
+
+-- Listing logo, stored as a small self-contained data: URI rather than a remote
+-- URL. The page's CSP is `img-src 'self' data:`, so a data URI renders with no
+-- policy change, while an arbitrary remote host would have to be allowlisted --
+-- which cannot be done for user-supplied origins. Added separately so existing
+-- databases pick it up on the next migrate.
+ALTER TABLE bids ADD COLUMN IF NOT EXISTS logo_data_url text;
+
+-- ------------------------------------------------------------------ claims
+-- An hour is bought outright at a price set by how soon it is, so a row here
+-- is a claim on one specific hour rather than a bid competing for it.
+ALTER TABLE bids ADD COLUMN IF NOT EXISTS reserved_until timestamptz;
+
+-- The double-sell guard. At most one live claim may exist per hour, enforced
+-- by the database rather than by application logic, so two buyers checking out
+-- at the same instant cannot both end up owning the hour: the second INSERT
+-- fails on this index instead of racing.
+CREATE UNIQUE INDEX IF NOT EXISTS bids_one_live_claim_idx
+  ON bids (hour_id) WHERE status IN ('active', 'won');
+
+ALTER TABLE bids DROP CONSTRAINT IF EXISTS bids_logo_bounded;
+ALTER TABLE bids ADD CONSTRAINT bids_logo_bounded
+  CHECK (logo_data_url IS NULL OR
+         (length(logo_data_url) <= 32768 AND logo_data_url LIKE 'data:image/%'));
+
 CREATE INDEX IF NOT EXISTS bids_user_idx ON bids (user_id, created_at DESC);
 
 ALTER TABLE hours

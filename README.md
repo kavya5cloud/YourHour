@@ -1,18 +1,22 @@
-# The Hour
+# GetYourHour
 
-A single-spot hourly auction. The current owner gets the homepage for an hour;
-the next hour is open for bids. Fifty percent of net proceeds from paid winning
-hours goes to charity.
+A single-spot hourly billboard. Each hour, one paying owner gets the homepage.
+Fifty percent of net proceeds goes to charity.
 
 ## How it works
 
-1. Bids are placed on the **next** hour. No payment method is taken at bid time,
-   and no sign-in is required — the bid form is the whole signup. Bidders who
-   have not confirmed their email are capped at `MAX_UNVERIFIED_BID_CENTS`.
-2. When the hour rolls over, the highest bidder is emailed a Polar checkout link.
-3. They have five minutes to pay. If they do not, the hour passes to the next
-   bidder, and so on until someone pays or the hour runs out.
-4. A paid winner's name and one-line message occupy the homepage for their hour.
+1. The board shows the next 24 hours, each with a price. **An hour costs more
+   the sooner it is** -- $50 for the next hour, $25 two out, down to a $5 floor
+   about ten hours out. Paying more buys a sooner slot.
+2. You pick an hour, fill in your product, link, and an optional logo, and go
+   straight to a Polar checkout. The hour is held for you while you pay.
+3. The moment payment clears, that hour is yours. Your name, line, logo, and
+   link occupy the homepage for its full sixty minutes.
+4. If you abandon checkout, the hold lapses and the hour goes back on sale.
+
+There is no bidding, so nobody is ever outbid, displaced, or refunded. That is
+deliberate: because a buyer learns their hour at the moment they pay, on Polar's
+own confirmation page, nothing ever has to be emailed to them afterwards.
 
 Every one of those decisions is made server-side against the database clock.
 The browser only displays the result.
@@ -21,12 +25,12 @@ The browser only displays the result.
 
 ```
 api/
-  state.ts              public auction state (unauthenticated)
-  bids.ts               place a bid
+  state.ts              public state: current owner, and the board of hours
+  claim.ts              buy one hour, and open its Polar checkout
   moderation.ts         review listing text before it is displayed
   auth/                 passwordless sign-in, session, sign-out
   webhooks/polar.ts     the only path that may mark an hour paid
-  cron/rollover.ts      closes hours, opens and expires payment windows
+  cron/rollover.ts      marks unbought hours unsold; optional (see below)
 lib/                    env, db, crypto, http, session, rate limiting,
                         validation, auction logic, Polar, email, audit
 db/schema.sql           tables, enums, constraints, indexes
@@ -56,23 +60,19 @@ functions, and [vercel.json](vercel.json) carries the security headers.
 1. Set every variable from `.env.example` in the project's environment settings.
 2. `POLAR_WEBHOOK_SECRET` must match the endpoint you register with Polar,
    pointed at `https://<your-domain>/api/webhooks/polar`.
-3. Rollover is driven by [.github/workflows/rollover.yml](.github/workflows/rollover.yml),
-   which calls `/api/cron/rollover` every five minutes. Set `SITE_ORIGIN` and
-   `CRON_SECRET` as **repository secrets** for it to work.
+3. Rollover is **optional**. Abandoned reservations free themselves: the board
+   ignores an expired hold, and `claimHour` clears an hour's own stale hold
+   under the row lock before inserting. So an hour returns to sale the moment
+   its hold lapses, whether or not any scheduler runs.
 
-   It is not in `vercel.json`, deliberately: Hobby plans cap cron at once per
-   day and reject a more frequent schedule, which fails the whole deployment.
-   On Pro, prefer Vercel Cron — it is punctual, where GitHub's scheduler has a
-   five-minute floor and is often ten or more minutes late. Add this to
-   `vercel.json` and delete the workflow:
+   `/api/cron/rollover` only labels past unbought hours "unsold", which is
+   cosmetic. Wire it up if you want that tidy: either the workflow in
+   [.github/workflows/rollover.yml](.github/workflows/rollover.yml) with
+   `SITE_ORIGIN` and `CRON_SECRET` as **repository secrets**, or on Vercel Pro
+   a `crons` entry in `vercel.json`. Hobby plans cap cron at once per day and
+   reject anything more frequent, which fails the whole deployment -- which is
+   why it is not in `vercel.json` by default.
 
-   ```json
-   "crons": [{ "path": "/api/cron/rollover", "schedule": "* * * * *" }]
-   ```
-
-   Vercel then sends `Authorization: Bearer $CRON_SECRET` automatically.
-   Note that `vercel.json` is strict JSON with no unknown keys permitted —
-   a stray `"comment"` field will fail the build.
 4. Run `npm run migrate` against the production database once.
 
 Hosting elsewhere: the handlers are plain Node request/response functions, but
@@ -88,8 +88,8 @@ before changing anything in `lib/auction.ts` or the webhook route.
 ## Testing
 
 ```bash
-npm test                                    # 27 unit tests, no database needed
-TEST_DATABASE_URL=postgres://... npm test   # all 53, including integration
+npm test                                    # 32 unit tests, no database needed
+TEST_DATABASE_URL=postgres://... npm test   # all 54, including integration
 ```
 
 Three layers:
@@ -98,30 +98,27 @@ Three layers:
   arithmetic, and webhook signature verification (tampered bodies, replayed
   timestamps, wrong keys, and the re-serialisation case that makes raw-body
   handling necessary). No database.
-- **Integration** — bidding, the row-lock concurrency guarantee, rollover
-  idempotency, payment-window expiry and promotion, and duplicate payment
-  confirmation, against real Postgres.
+- **Integration** — claiming, the double-sell guarantee under concurrency,
+  price-by-distance, abandoned reservations returning to the board, and
+  duplicate payment confirmation, against real Postgres.
 - **API** — handlers mounted on a real `http.Server`: security headers, 405s,
-  the unverified bid cap, CSRF enforcement on session-bearing requests,
-  account-enumeration resistance, and the cron secret check.
+  claiming without a session, the required link, a taken hour returning 409,
+  CSRF enforcement, account-enumeration resistance, and the cron secret check.
 
 The DB-backed suites truncate shared tables, so the test script pins
 `--test-concurrency=1`. Do not remove that without giving each suite its own
 database.
 
-### Verifying the concurrency test still has teeth
+### The double-sell guarantee
 
-The row lock in `lib/auction.ts` is load-bearing. To confirm the test would
-actually catch its removal:
+Two buyers can reach `claimHour` for the same hour at the same instant. What
+stops them both succeeding is not application logic but a partial unique index:
 
-```bash
-sed -i '' 's/WHERE id = $1 FOR UPDATE/WHERE id = $1/' lib/auction.ts
-TEST_DATABASE_URL=postgres://... node --test --test-name-pattern="concurrent bids" test/integration.test.ts
-# expect: FAIL -- "exactly one bid should win, got 3"
-git checkout lib/auction.ts
+```sql
+CREATE UNIQUE INDEX bids_one_live_claim_idx
+  ON bids (hour_id) WHERE status IN ('active', 'won');
 ```
 
-This check matters because the first version of that test passed *with the lock
-removed*: the hour row did not exist yet, so `INSERT ... ON CONFLICT` serialised
-the transactions on the unique index and hid the race. The test now commits the
-hour row first, matching production, where the cron job has already created it.
+The loser's INSERT violates it and is turned into a 409. Drop that index and
+`concurrent claims on one hour cannot both succeed` fails, which is the point:
+the database decides, not a read-then-write that a race could interleave.

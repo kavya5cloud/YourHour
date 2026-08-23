@@ -52,10 +52,11 @@ export default withErrorHandling(async function handler(req: ApiRequest, res: Ap
       display_name: string;
       tagline: string;
       link_url: string | null;
+      logo_data_url: string | null;
       amount_cents: number;
       created_at: Date;
     }>(
-      `SELECT b.id, b.hour_id, b.display_name, b.tagline, b.link_url, b.amount_cents, b.created_at
+      `SELECT b.id, b.hour_id, b.display_name, b.tagline, b.link_url, b.logo_data_url, b.amount_cents, b.created_at
          FROM bids b
         WHERE b.moderation = 'pending' AND b.status IN ('active', 'won')
         ORDER BY b.hour_id ASC, b.amount_cents DESC

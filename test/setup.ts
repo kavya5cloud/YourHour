@@ -20,15 +20,15 @@ export const TEST_WEBHOOK_SECRET = `whsec_${Buffer.from('test-webhook-secret-val
 export function loadEnv(): void {
   const values: Record<string, string> = {
     NODE_ENV: 'test',
-    SITE_ORIGIN: 'https://thehour.test',
-    DATABASE_URL: 'postgres://user:pass@localhost/thehour_test',
+    SITE_ORIGIN: 'https://getyourhour.test',
+    DATABASE_URL: 'postgres://user:pass@localhost/getyourhour_test',
     SECRET_KEY: 'test-secret-key-that-is-long-enough-for-validation',
     CRON_SECRET: 'test-cron-secret-that-is-long-enough-for-validation',
     POLAR_ACCESS_TOKEN: 'polar_test_token',
     POLAR_WEBHOOK_SECRET: TEST_WEBHOOK_SECRET,
     POLAR_PRODUCT_ID: 'prod_test',
     RESEND_API_KEY: 're_test',
-    EMAIL_FROM: 'The Hour <test@thehour.test>',
+    EMAIL_FROM: 'GetYourHour <test@getyourhour.test>',
   };
   for (const [key, value] of Object.entries(values)) {
     process.env[key] = value;

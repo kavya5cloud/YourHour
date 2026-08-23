@@ -96,17 +96,22 @@ export function validateEmail(raw: unknown): string {
 }
 
 /**
- * Optional outbound link on a listing.
+ * The outbound link on a listing. Required: a paid hour that points nowhere
+ * is worth little to the buyer, and the link is the thing being sold.
  *
  * Only http(s) is accepted -- `javascript:`, `data:`, and `vbscript:` are the
  * classic ways a "link" becomes script execution. Embedded credentials are
  * rejected because they are almost always a phishing construction.
  */
-export function validateLinkUrl(raw: unknown): string | null {
-  if (raw === undefined || raw === null || raw === '') return null;
+export function validateLinkUrl(raw: unknown): string {
+  if (raw === undefined || raw === null || raw === '') {
+    throw badRequest('Add the link your hour should point to.', 'link_required');
+  }
   if (typeof raw !== 'string') throw badRequest('Link must be text.', 'link_invalid');
   const value = cleanText(raw, 'Link');
-  if (value.length === 0) return null;
+  if (value.length === 0) {
+    throw badRequest('Add the link your hour should point to.', 'link_required');
+  }
   if (value.length > 200) throw badRequest('That link is too long.', 'link_too_long');
 
   let url: URL;
@@ -134,6 +139,65 @@ export function validateLinkUrl(raw: unknown): string | null {
  * Accepting only an integer number of dollars keeps float rounding out of the
  * money path entirely.
  */
+/**
+ * Optional listing logo, accepted only as a small self-contained data: URI.
+ *
+ * Why a data URI and not a URL the bidder hosts: the page is served with
+ * `img-src 'self' data:`, so a data URI renders under the existing policy,
+ * where an arbitrary remote host could only work by allowlisting it -- which
+ * is impossible for user-supplied origins, and would leak every visitor's IP
+ * to whatever server the bidder named.
+ *
+ * SVG is deliberately not accepted. An SVG is a document that can carry script
+ * and external references, so treating it as an image is a stored-XSS vector.
+ * Only the three raster formats below are allowed, and the declared type has to
+ * agree with the file's own magic bytes -- a PNG header claiming to be a JPEG
+ * is a sign of someone probing, not a real upload.
+ */
+const LOGO_MAX_CHARS = 32_768;
+
+const LOGO_SIGNATURES: Record<string, readonly number[][]> = {
+  'image/png': [[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]],
+  'image/jpeg': [[0xff, 0xd8, 0xff]],
+  // RIFF....WEBP -- the four bytes at offset 4 are the length, so check both ends.
+  'image/webp': [[0x52, 0x49, 0x46, 0x46]],
+};
+
+function startsWithBytes(buffer: Buffer, signature: readonly number[]): boolean {
+  if (buffer.length < signature.length) return false;
+  return signature.every((byte, index) => buffer[index] === byte);
+}
+
+export function validateLogo(raw: unknown): string | null {
+  if (raw === undefined || raw === null || raw === '') return null;
+  if (typeof raw !== 'string') throw badRequest('Logo must be an image.', 'logo_invalid');
+  const value = raw.trim();
+  if (value.length === 0) return null;
+  if (value.length > LOGO_MAX_CHARS) {
+    throw badRequest('That logo is too large. Use a smaller image.', 'logo_too_large');
+  }
+
+  const match = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
+  if (!match) throw badRequest('Logo must be a PNG, JPEG, or WebP image.', 'logo_invalid');
+  const mime = match[1]!;
+  const encoded = match[2]!;
+
+  const bytes = Buffer.from(encoded, 'base64');
+  if (bytes.length === 0) throw badRequest('That logo could not be read.', 'logo_invalid');
+
+  const signatures = LOGO_SIGNATURES[mime]!;
+  if (!signatures.some((signature) => startsWithBytes(bytes, signature))) {
+    throw badRequest('That file is not a valid image.', 'logo_invalid');
+  }
+  if (mime === 'image/webp' && bytes.subarray(8, 12).toString('ascii') !== 'WEBP') {
+    throw badRequest('That file is not a valid image.', 'logo_invalid');
+  }
+
+  // Re-encode from the decoded bytes so what is stored is canonical base64
+  // rather than whatever padding or whitespace the client happened to send.
+  return `data:${mime};base64,${bytes.toString('base64')}`;
+}
+
 export function validateBidDollars(raw: unknown): number {
   let dollars: number;
   if (typeof raw === 'number') {

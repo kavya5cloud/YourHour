@@ -38,7 +38,7 @@ export const env = {
   nodeEnv: optional('NODE_ENV') ?? 'development',
   isProduction: (optional('VERCEL_ENV') ?? optional('NODE_ENV')) === 'production',
 
-  /** Canonical public origin, e.g. https://thehour.example. Used for cookies,
+  /** Canonical public origin, e.g. https://getyourhour.example. Used for cookies,
    *  links in email, and strict Origin checking on state-changing requests. */
   siteOrigin: required('SITE_ORIGIN'),
 
@@ -85,6 +85,19 @@ export const env = {
      * something small, while leaving casual bidding frictionless.
      */
     maxUnverifiedBidCents: integer('MAX_UNVERIFIED_BID_CENTS', 5_000),
+    /**
+     * Claim pricing. An hour's price falls the further out it is, so paying
+     * more buys a sooner slot without anyone ever being displaced:
+     *   price(hoursAway) = max(floor, round(base / hoursAway))
+     * With the defaults that is $50 for the next hour, $25 two out, $10 five
+     * out, and $5 for anything ten hours or further away.
+     */
+    claimBaseCents: integer('CLAIM_BASE_CENTS', 5_000),
+    claimFloorCents: integer('CLAIM_FLOOR_CENTS', 500),
+    /** How far ahead the board is open for claiming. */
+    claimHorizonHours: integer('CLAIM_HORIZON_HOURS', 24),
+    /** How long a slot is held while the buyer is inside Polar checkout. */
+    reservationSeconds: integer('RESERVATION_SECONDS', 600),
     /** How long a winner has to complete checkout. */
     paymentWindowSeconds: integer('PAYMENT_WINDOW_SECONDS', 300),
     /** Share of net proceeds pledged to charity, in basis points. */

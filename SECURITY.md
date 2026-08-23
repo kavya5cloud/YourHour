@@ -1,6 +1,6 @@
 # Security
 
-The Hour takes money from strangers, publishes text they wrote onto its own
+GetYourHour takes money from strangers, publishes text they wrote onto its own
 homepage, and does both on a one-hour cycle with no human in the loop. This
 document records what that means for the threat model, what the code does about
 it, and what is deliberately still open.
