@@ -73,45 +73,48 @@ button { -webkit-tap-highlight-color: transparent; }
   height: auto;
 }
 
-/* ------------------------------------------------------------------- board */
-.board {
+/* ------------------------------------------------------------------- queue */
+.queue {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
-  gap: 8px;
+  gap: 6px;
   margin-bottom: 18px;
 }
-.slot {
+.queue-row {
   display: grid;
-  gap: 2px;
-  padding: 9px 6px;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
   border: 1px solid var(--ink);
   border-radius: 10px;
-  background: transparent;
-  color: var(--ink);
-  font: inherit;
-  text-align: center;
-  cursor: pointer;
 }
-.slot b {
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: -.01em;
-}
-.slot span {
-  color: var(--soft);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-.slot.chosen {
+.queue-row:first-child {
   background: var(--ink);
   color: var(--paper-high);
 }
-.slot.chosen span { color: var(--paper-low); }
-.slot.taken,
-.slot:disabled {
-  border-style: dashed;
-  opacity: .42;
-  cursor: not-allowed;
+.queue-pos {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.queue-row b {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.queue-paid { font-variant-numeric: tabular-nums; }
+.queue-row:not(:first-child) .queue-pos,
+.queue-row:not(:first-child) .queue-paid { color: var(--soft); }
+.queue-empty {
+  padding: 12px;
+  border: 1px dashed var(--ink);
+  border-radius: 10px;
+  color: var(--soft);
+  font-size: 12px;
+  text-align: center;
 }
 
 /* ------------------------------------------------------------ listing logo */

@@ -112,13 +112,11 @@ export interface PublicState {
       paidCents: number;
     } | null;
   };
-  /** The hours on sale right now, soonest first. */
-  board: Array<{
-    hour: number;
-    startsAt: string;
-    priceCents: number;
-    taken: boolean;
-  }>;
+  /** Who airs next, highest payer first. A projection: it reshuffles freely
+   *  until an hour actually starts and takes its occupant. */
+  queue: Array<{ position: number; name: string; amountCents: number }>;
+  /** What a purchase must beat to go straight to the front. */
+  frontOfQueueCents: number;
   nextHour: {
     id: number;
     startsAt: string;
@@ -136,6 +134,11 @@ export interface PublicState {
  * a public endpoint should not become a directory of who is bidding what.
  */
 export async function getPublicState(): Promise<PublicState> {
+  // Hand any hour that has come round its occupant before reporting state, so
+  // the page is correct with no scheduler running anywhere.
+  await settleDueHours();
+  const queue = await projectedQueue();
+  const frontOfQueueCents = (queue[0]?.amountCents ?? 0) + env.auction.minIncrementCents;
   const now = Date.now();
   const currentId = hourIdAt(now);
   const nextId = currentId + 1;
@@ -191,30 +194,9 @@ export async function getPublicState(): Promise<PublicState> {
   const display = (value: string | null, moderation: string | null): string =>
     moderation === 'approved' ? (value ?? '') : UNDER_REVIEW;
 
-  // The board: every hour inside the horizon, with its price and whether a
-  // live claim already holds it. A reserved-but-unpaid hour counts as taken,
-  // which is what stops two people buying the same slot.
-  const horizon = env.auction.claimHorizonHours;
-  const { rows: takenRows } = await query<{ hour_id: number }>(
-    `SELECT hour_id FROM bids
-      WHERE status IN ('active', 'won')
-        AND (reserved_until IS NULL OR reserved_until > now())
-        AND hour_id > $1 AND hour_id <= $2`,
-    [currentId, currentId + horizon],
-  );
-  const taken = new Set(takenRows.map((row) => row.hour_id));
-  const board = Array.from({ length: horizon }, (_, index) => {
-    const hour = currentId + index + 1;
-    return {
-      hour,
-      startsAt: hourStartsAt(hour).toISOString(),
-      priceCents: priceForHour(hour, now),
-      taken: taken.has(hour),
-    };
-  });
-
   return {
-    board,
+    queue,
+    frontOfQueueCents,
     serverTime: new Date(now).toISOString(),
     currentHour: {
       id: currentId,
@@ -278,7 +260,7 @@ export interface RolloverReport {
  * twice in a minute or not at all for a day both converge on the same state.
  */
 export async function runRollover(): Promise<RolloverReport> {
-  const released = await releaseExpiredClaims();
+  const released: number[] = [];
 
   // An hour that has started and was never paid for is simply unsold. Hours
   // that were paid for are already 'owned', set by the webhook, so they are
@@ -313,12 +295,8 @@ export async function markPaid(paymentId: string, providerOrderId: string | null
     const payment = rows[0];
     if (!payment) return false; // already settled, expired, or unknown
 
-    await lockHour(client, payment.hour_id);
-    await client.query(
-      `UPDATE hours SET status = 'owned', winning_bid_id = $1, settled_at = now()
-        WHERE id = $2 AND status IN ('open', 'awaiting_payment', 'forfeited')`,
-      [payment.bid_id, payment.hour_id],
-    );
+    // Paying puts the purchase into the pool. It does not take an hour: which
+    // hour it airs in is decided later, by rank, when an hour comes round.
     await client.query(`UPDATE bids SET status = 'won' WHERE id = $1`, [payment.bid_id]);
 
     // Paying through a link sent to that address proves control of it just as
@@ -331,7 +309,7 @@ export async function markPaid(paymentId: string, providerOrderId: string | null
     await audit({
       action: 'payment.paid',
       actorId: payment.user_id,
-      subject: `hour:${payment.hour_id}`,
+      subject: `bid:${payment.bid_id}`,
       data: { amountCents: payment.amount_cents, paymentId },
     });
     return true;
@@ -394,8 +372,8 @@ export function priceForHour(hourId: number, now: number = Date.now()): number {
 
 // ------------------------------------------------------------------ claiming
 
-export interface ClaimInput {
-  hourId: number;
+export interface PurchaseInput {
+  amountCents: number;
   userId: string;
   displayName: string;
   tagline: string;
@@ -404,111 +382,61 @@ export interface ClaimInput {
   ipHash: Buffer | null;
 }
 
-export interface ClaimResult {
+export interface PurchaseResult {
   bidId: string;
   paymentId: string;
-  hourId: number;
-  priceCents: number;
+  amountCents: number;
 }
 
 /**
- * Reserve one specific hour for a buyer and open a payment for it.
+ * Record a purchase and open a payment for it.
  *
- * The concurrency argument is the partial unique index on `bids (hour_id)`
- * where the status is live: two buyers who reach this line at the same instant
- * cannot both succeed, because the second INSERT violates that index and is
- * turned into a 409 below. The database decides, not a read-then-write in
- * application code that a race could interleave.
- *
- * The reservation is what makes the hour un-sellable while its buyer is inside
- * Polar checkout. If they never finish, `releaseExpiredClaims` puts the hour
- * back on sale.
+ * No hour is chosen here, and none is reserved. Buyers pay what they like; the
+ * paid pool is ranked by amount, and an hour claims its occupant when it comes
+ * round. That is why nobody can be outbid into getting nothing: everyone who
+ * pays airs eventually, and paying more only moves you up the order.
  */
-export async function claimHour(input: ClaimInput): Promise<ClaimResult> {
-  const now = Date.now();
-  const currentId = hourIdAt(now);
-  const hoursAway = input.hourId - currentId;
-  if (hoursAway < 1) {
-    throw conflict('That hour has already started. Pick a later one.', 'hour_past');
+export async function purchase(input: PurchaseInput): Promise<PurchaseResult> {
+  if (input.amountCents < env.auction.minBidCents) {
+    throw conflict(`The minimum is ${formatMoney(env.auction.minBidCents)}.`, 'amount_too_low');
   }
-  if (hoursAway > env.auction.claimHorizonHours) {
-    throw conflict('That hour is too far out to claim yet.', 'hour_too_far');
-  }
-
-  const priceCents = priceForHour(input.hourId, now);
-  const split = splitProceeds(priceCents);
-  const reservedUntil = new Date(now + env.auction.reservationSeconds * 1000);
+  const split = splitProceeds(input.amountCents);
+  const moderation = env.auction.autoApproveListings ? 'approved' : 'pending';
 
   return tx(async (client) => {
-    await ensureHour(client, input.hourId);
-    await lockHour(client, input.hourId);
-
-    // Self-healing: drop this hour's own expired reservation before inserting.
-    // The unique index counts any live claim, so without this an abandoned
-    // checkout would keep the hour off sale until the cron job happened to run
-    // -- which on a plan with once-a-day cron could be most of a day. Doing it
-    // here, under the hour lock, means an abandoned hour is sellable the moment
-    // its hold lapses, whether or not the scheduler ever fires.
-    await client.query(
-      `UPDATE bids SET status = 'lost', reserved_until = NULL
-        WHERE hour_id = $1 AND status = 'active'
-          AND reserved_until IS NOT NULL AND reserved_until < now()
-          AND NOT EXISTS (
-            SELECT 1 FROM payments p WHERE p.bid_id = bids.id AND p.status = 'paid'
-          )`,
-      [input.hourId],
+    const { rows } = await client.query<{ id: string }>(
+      `INSERT INTO bids (hour_id, user_id, amount_cents, display_name, tagline,
+                         link_url, logo_data_url, ip_hash, moderation)
+       VALUES (NULL, $1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id`,
+      [
+        input.userId,
+        input.amountCents,
+        input.displayName,
+        input.tagline,
+        input.linkUrl,
+        input.logoDataUrl,
+        input.ipHash,
+        moderation,
+      ],
     );
-
-    const moderation = env.auction.autoApproveListings ? 'approved' : 'pending';
-    let bidId: string;
-    try {
-      const { rows } = await client.query<{ id: string }>(
-        `INSERT INTO bids (hour_id, user_id, amount_cents, display_name, tagline,
-                           link_url, logo_data_url, ip_hash, moderation, reserved_until)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         RETURNING id`,
-        [
-          input.hourId,
-          input.userId,
-          priceCents,
-          input.displayName,
-          input.tagline,
-          input.linkUrl,
-          input.logoDataUrl,
-          input.ipHash,
-          moderation,
-          reservedUntil,
-        ],
-      );
-      bidId = rows[0]!.id;
-    } catch (error) {
-      // 23505 is unique_violation: somebody else holds this hour.
-      if ((error as { code?: string }).code === '23505') {
-        throw conflict('That hour was just taken. Pick another.', 'hour_taken');
-      }
-      throw error;
-    }
+    const bidId = rows[0]!.id;
 
     const { rows: paymentRows } = await client.query<{ id: string }>(
       `INSERT INTO payments (hour_id, bid_id, user_id, amount_cents, fee_cents, charity_cents, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       VALUES (NULL, $1, $2, $3, $4, $5, now() + interval '1 day')
        RETURNING id`,
-      [input.hourId, bidId, input.userId, priceCents, split.feeCents, split.charityCents, reservedUntil],
+      [bidId, input.userId, input.amountCents, split.feeCents, split.charityCents],
     );
 
-    return { bidId, paymentId: paymentRows[0]!.id, hourId: input.hourId, priceCents };
+    return { bidId, paymentId: paymentRows[0]!.id, amountCents: input.amountCents };
   });
 }
 
-/**
- * Release a claim immediately, for when checkout could not be opened.
- *
- * Without this the hour would sit reserved until `releaseExpiredClaims` caught
- * it, so a Polar outage would quietly take hours off sale for no reason.
- */
+/** Abandon an unpaid purchase, for when checkout could not be opened. */
 export async function releaseClaim(bidId: string): Promise<void> {
   await tx(async (client) => {
-    await client.query(`UPDATE bids SET status = 'lost', reserved_until = NULL WHERE id = $1`, [bidId]);
+    await client.query(`UPDATE bids SET status = 'lost' WHERE id = $1 AND status = 'active'`, [bidId]);
     await client.query(
       `UPDATE payments SET status = 'failed' WHERE bid_id = $1 AND status = 'pending'`,
       [bidId],
@@ -517,30 +445,82 @@ export async function releaseClaim(bidId: string): Promise<void> {
 }
 
 /**
- * Put back any hour whose buyer never completed checkout.
+ * Give every hour that has come round its occupant, highest payer first.
  *
- * Runs from the same cron as everything else. Releasing is a status change
- * rather than a delete so an abandoned claim stays auditable.
+ * This is where the ranking becomes irreversible. Future hours are never
+ * assigned -- the order for them is only ever a projection, so a bigger payer
+ * arriving reshuffles it freely. The moment an hour starts, though, it takes
+ * the top of the pool and keeps it: somebody who is already on the page cannot
+ * be bumped off it by a later purchase.
+ *
+ * Called lazily from `getPublicState`, so it needs no scheduler. Idempotent:
+ * an hour that already has an occupant is skipped, and the assignment happens
+ * under the hour's row lock, so two concurrent readers cannot both hand out
+ * the same slot.
  */
-export async function releaseExpiredClaims(): Promise<number[]> {
-  return tx(async (client) => {
-    const { rows } = await client.query<{ id: string; hour_id: number }>(
-      `UPDATE bids SET status = 'lost', reserved_until = NULL
-        WHERE status = 'active'
-          AND reserved_until IS NOT NULL
-          AND reserved_until < now()
-          AND NOT EXISTS (
-            SELECT 1 FROM payments p WHERE p.bid_id = bids.id AND p.status = 'paid'
-          )
-        RETURNING id, hour_id`,
-    );
-    if (rows.length > 0) {
-      await client.query(
-        `UPDATE payments SET status = 'expired'
-          WHERE bid_id = ANY($1::uuid[]) AND status = 'pending'`,
-        [rows.map((row) => row.id)],
+export async function settleDueHours(now: number = Date.now()): Promise<number[]> {
+  const currentId = hourIdAt(now);
+  const settled: number[] = [];
+
+  // Only look back a bounded distance, so a long-idle deployment does not try
+  // to settle thousands of hours in one request.
+  const { rows: due } = await query<{ id: number }>(
+    `SELECT id FROM hours
+      WHERE starts_at <= now() AND winning_bid_id IS NULL AND status = 'open'
+      ORDER BY id ASC LIMIT 24`,
+  );
+  for (const hour of [...due.map((row) => row.id), currentId]) {
+    const assigned = await tx(async (client) => {
+      await ensureHour(client, hour);
+      const locked = await lockHour(client, hour);
+      if (locked.winning_bid_id !== null) return false;
+      if (hourStartsAt(hour).getTime() > now) return false;
+
+      const { rows } = await client.query<{ id: string }>(
+        `SELECT id FROM bids
+          WHERE status = 'won' AND hour_id IS NULL
+          ORDER BY amount_cents DESC, created_at ASC
+          LIMIT 1
+          FOR UPDATE SKIP LOCKED`,
       );
-    }
-    return rows.map((row) => row.hour_id);
-  });
+      const top = rows[0];
+      if (!top) {
+        await client.query(
+          `UPDATE hours SET status = 'unsold', settled_at = now() WHERE id = $1 AND status = 'open'`,
+          [hour],
+        );
+        return false;
+      }
+
+      await client.query(`UPDATE bids SET hour_id = $1 WHERE id = $2`, [hour, top.id]);
+      await client.query(
+        `UPDATE hours SET status = 'owned', winning_bid_id = $1, settled_at = now() WHERE id = $2`,
+        [top.id, hour],
+      );
+      await client.query(`UPDATE payments SET hour_id = $1 WHERE bid_id = $2`, [hour, top.id]);
+      return true;
+    });
+    if (assigned) settled.push(hour);
+  }
+  return settled;
 }
+
+/** The projected order for hours that have not started, highest payer first. */
+export async function projectedQueue(limit = 12): Promise<
+  Array<{ position: number; name: string; amountCents: number }>
+> {
+  const { rows } = await query<{ display_name: string; amount_cents: number; moderation: string }>(
+    `SELECT display_name, amount_cents, moderation FROM bids
+      WHERE status = 'won' AND hour_id IS NULL
+      ORDER BY amount_cents DESC, created_at ASC
+      LIMIT $1`,
+    [limit],
+  );
+  return rows.map((row, index) => ({
+    position: index + 1,
+    name: row.moderation === 'approved' ? row.display_name : UNDER_REVIEW,
+    amountCents: row.amount_cents,
+  }));
+}
+
+

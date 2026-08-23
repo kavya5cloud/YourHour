@@ -53,12 +53,12 @@
           <div class="tear" aria-hidden="true"><i></i><i></i></div>
 
           <section class="auction-card" aria-labelledby="auction-title">
-            <div class="eyebrow"><span id="auction-title">Pick your hour</span><b id="board-note">Sooner costs more</b></div>
+            <div class="eyebrow"><span id="auction-title">Pay what it&rsquo;s worth</span><b id="queue-note">Highest pays, goes next</b></div>
 
-            <!-- The board. Every hour on sale, soonest (and dearest) first.
-                 Choosing one sets the price; there is no bidding and nothing to
-                 win or lose -- you buy the slot outright. -->
-            <div class="board" id="board" role="radiogroup" aria-label="Hours on sale"></div>
+            <!-- The running order. A projection, not a schedule: it reshuffles
+                 whenever someone pays more, right up until an hour starts and
+                 takes whoever is at the front. -->
+            <div class="queue" id="queue" aria-live="polite"></div>
 
             <form id="claim-form">
               <div class="field"><label for="name">Your product</label><input id="name" name="name" maxlength="24" placeholder="yoursite.com" autocomplete="off" required /></div>
@@ -75,9 +75,12 @@
                 <p class="logo-note" id="logo-note">Leave this empty and we'll use your site's own icon. Or upload a PNG, JPEG, or WebP to override it.</p>
               </div>
               <div class="field"><label for="email">Email <span class="count">for your receipt</span></label><input id="email" name="email" type="email" maxlength="254" placeholder="you@example.com" autocomplete="email" required /></div>
-              <button class="claim" id="claim-submit" type="submit" disabled>Pick an hour first</button>
+              <div class="bid-row">
+                <div class="field"><label for="amount">Your amount <span class="count" id="front-hint"></span></label><input id="amount" name="amount" inputmode="numeric" autocomplete="off" placeholder="50" required /></div>
+                <button class="claim" id="claim-submit" type="submit">Pay &amp; join the queue</button>
+              </div>
               <p class="message" id="form-message" role="alert"></p>
-              <p class="rules" id="claim-help"><strong>You pay once, now.</strong> The hour is held for you while you check out, and it is yours the moment payment clears.</p>
+              <p class="rules" id="claim-help"><strong>Everyone who pays gets an hour.</strong> Paying more moves you sooner, it never decides whether you get on. Your slot can drift later if someone pays more, and it locks the moment your hour starts.</p>
               <p class="charity-note">♡ <strong>50% of net proceeds is donated to charity.</strong></p>
             </form>
           </section>

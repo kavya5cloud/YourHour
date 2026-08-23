@@ -469,6 +469,30 @@ function validateLogo(raw) {
   }
   return `data:${mime};base64,${bytes.toString("base64")}`;
 }
+function validateBidDollars(raw) {
+  let dollars;
+  if (typeof raw === "number") {
+    dollars = raw;
+  } else if (typeof raw === "string") {
+    const trimmed = raw.trim().replace(/^\$/, "").replace(/,/g, "");
+    if (!/^\d{1,9}$/.test(trimmed)) throw badRequest("Enter a whole-dollar bid.", "amount_invalid");
+    dollars = Number.parseInt(trimmed, 10);
+  } else {
+    throw badRequest("Enter a whole-dollar bid.", "amount_invalid");
+  }
+  if (!Number.isInteger(dollars) || dollars <= 0) throw badRequest("Enter a whole-dollar bid.", "amount_invalid");
+  const cents = dollars * 100;
+  if (cents < env.auction.minBidCents) {
+    throw badRequest(`Bids start at ${formatMoney(env.auction.minBidCents)}.`, "amount_too_low");
+  }
+  if (cents > env.auction.maxBidCents) {
+    throw badRequest(`Bids are capped at ${formatMoney(env.auction.maxBidCents)}.`, "amount_too_high");
+  }
+  return cents;
+}
+function formatMoney(cents) {
+  return `$${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+}
 
 // lib/audit.ts
 async function audit(entry) {
@@ -497,7 +521,6 @@ async function createCheckout(options) {
       customer_email: options.email,
       success_url: `${env.siteOrigin}/?paid=1`,
       metadata: {
-        hour_id: String(options.hourId),
         bid_id: options.bidId,
         payment_id: options.paymentId
       }
@@ -518,15 +541,7 @@ async function createCheckout(options) {
 }
 
 // lib/auction.ts
-var HOUR_MS = 36e5;
 var EPOCH_MS = Date.UTC(2024, 0, 1, 0, 0, 0);
-function hourIdAt(instant = Date.now()) {
-  const ms = instant instanceof Date ? instant.getTime() : instant;
-  return Math.floor((ms - EPOCH_MS) / HOUR_MS) + 1;
-}
-function hourStartsAt(hourId) {
-  return new Date(EPOCH_MS + (hourId - 1) * HOUR_MS);
-}
 function splitProceeds(amountCents) {
   const feeCents = Math.min(
     amountCents,
@@ -536,95 +551,42 @@ function splitProceeds(amountCents) {
   const charityCents = Math.floor(netCents * env.auction.charityBasisPoints / 1e4);
   return { amountCents, feeCents, netCents, charityCents };
 }
-async function ensureHour(client, hourId) {
-  const runner = client ? client.query.bind(client) : query;
-  const startsAt = hourStartsAt(hourId);
-  await runner(
-    `INSERT INTO hours (id, starts_at, ends_at, status)
-     VALUES ($1, $2, $3, 'open')
-     ON CONFLICT (id) DO NOTHING`,
-    [hourId, startsAt, new Date(startsAt.getTime() + HOUR_MS)]
-  );
-}
-async function lockHour(client, hourId) {
-  await ensureHour(client, hourId);
-  const { rows } = await client.query(`SELECT id, status, starts_at, ends_at, winning_bid_id FROM hours WHERE id = $1 FOR UPDATE`, [hourId]);
-  const row = rows[0];
-  if (!row) throw new Error(`Hour ${hourId} vanished after insert`);
-  return row;
-}
-function priceForHour(hourId, now = Date.now()) {
-  const currentId = hourIdAt(now);
-  const hoursAway = hourId - currentId;
-  if (hoursAway < 1) return 0;
-  const { claimBaseCents, claimFloorCents } = env.auction;
-  return Math.max(claimFloorCents, Math.round(claimBaseCents / hoursAway));
-}
-async function claimHour(input) {
-  const now = Date.now();
-  const currentId = hourIdAt(now);
-  const hoursAway = input.hourId - currentId;
-  if (hoursAway < 1) {
-    throw conflict("That hour has already started. Pick a later one.", "hour_past");
+async function purchase(input) {
+  if (input.amountCents < env.auction.minBidCents) {
+    throw conflict(`The minimum is ${formatMoney(env.auction.minBidCents)}.`, "amount_too_low");
   }
-  if (hoursAway > env.auction.claimHorizonHours) {
-    throw conflict("That hour is too far out to claim yet.", "hour_too_far");
-  }
-  const priceCents = priceForHour(input.hourId, now);
-  const split = splitProceeds(priceCents);
-  const reservedUntil = new Date(now + env.auction.reservationSeconds * 1e3);
+  const split = splitProceeds(input.amountCents);
+  const moderation = env.auction.autoApproveListings ? "approved" : "pending";
   return tx(async (client) => {
-    await ensureHour(client, input.hourId);
-    await lockHour(client, input.hourId);
-    await client.query(
-      `UPDATE bids SET status = 'lost', reserved_until = NULL
-        WHERE hour_id = $1 AND status = 'active'
-          AND reserved_until IS NOT NULL AND reserved_until < now()
-          AND NOT EXISTS (
-            SELECT 1 FROM payments p WHERE p.bid_id = bids.id AND p.status = 'paid'
-          )`,
-      [input.hourId]
+    const { rows } = await client.query(
+      `INSERT INTO bids (hour_id, user_id, amount_cents, display_name, tagline,
+                         link_url, logo_data_url, ip_hash, moderation)
+       VALUES (NULL, $1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING id`,
+      [
+        input.userId,
+        input.amountCents,
+        input.displayName,
+        input.tagline,
+        input.linkUrl,
+        input.logoDataUrl,
+        input.ipHash,
+        moderation
+      ]
     );
-    const moderation = env.auction.autoApproveListings ? "approved" : "pending";
-    let bidId;
-    try {
-      const { rows } = await client.query(
-        `INSERT INTO bids (hour_id, user_id, amount_cents, display_name, tagline,
-                           link_url, logo_data_url, ip_hash, moderation, reserved_until)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         RETURNING id`,
-        [
-          input.hourId,
-          input.userId,
-          priceCents,
-          input.displayName,
-          input.tagline,
-          input.linkUrl,
-          input.logoDataUrl,
-          input.ipHash,
-          moderation,
-          reservedUntil
-        ]
-      );
-      bidId = rows[0].id;
-    } catch (error) {
-      if (error.code === "23505") {
-        throw conflict("That hour was just taken. Pick another.", "hour_taken");
-      }
-      throw error;
-    }
+    const bidId = rows[0].id;
     const { rows: paymentRows } = await client.query(
       `INSERT INTO payments (hour_id, bid_id, user_id, amount_cents, fee_cents, charity_cents, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       VALUES (NULL, $1, $2, $3, $4, $5, now() + interval '1 day')
        RETURNING id`,
-      [input.hourId, bidId, input.userId, priceCents, split.feeCents, split.charityCents, reservedUntil]
+      [bidId, input.userId, input.amountCents, split.feeCents, split.charityCents]
     );
-    return { bidId, paymentId: paymentRows[0].id, hourId: input.hourId, priceCents };
+    return { bidId, paymentId: paymentRows[0].id, amountCents: input.amountCents };
   });
 }
 async function releaseClaim(bidId) {
   await tx(async (client) => {
-    await client.query(`UPDATE bids SET status = 'lost', reserved_until = NULL WHERE id = $1`, [bidId]);
+    await client.query(`UPDATE bids SET status = 'lost' WHERE id = $1 AND status = 'active'`, [bidId]);
     await client.query(
       `UPDATE payments SET status = 'failed' WHERE bid_id = $1 AND status = 'pending'`,
       [bidId]
@@ -695,14 +657,13 @@ var claim_default = withErrorHandling(async function handler(req, res) {
   const body = await readJsonBody(req);
   const buyer = await resolveBuyer(req, body);
   await enforce("claim:user", buyer.id, env.limits.bidsPerUserPerHour, 3600, "You are going too quickly.");
-  const hourId = Number(body.hourId);
-  if (!Number.isInteger(hourId)) throw badRequest("Pick an hour to claim.", "hour_required");
+  const amountCents = validateBidDollars(body.amount);
   const displayName = validateDisplayName(body.name);
   const tagline = validateTagline(body.message);
   const linkUrl = validateLinkUrl(body.link);
   const logoDataUrl = validateLogo(body.logo) ?? await fetchLogoForLink(linkUrl);
-  const claim = await claimHour({
-    hourId,
+  const claim = await purchase({
+    amountCents,
     userId: buyer.id,
     displayName,
     tagline,
@@ -713,9 +674,8 @@ var claim_default = withErrorHandling(async function handler(req, res) {
   let checkout;
   try {
     checkout = await createCheckout({
-      amountCents: claim.priceCents,
+      amountCents: claim.amountCents,
       email: buyer.email,
-      hourId: claim.hourId,
       bidId: claim.bidId,
       paymentId: claim.paymentId
     });
@@ -724,7 +684,7 @@ var claim_default = withErrorHandling(async function handler(req, res) {
     await audit({
       action: "claim.released",
       actorId: buyer.id,
-      subject: `hour:${claim.hourId}`,
+      subject: `bid:${claim.bidId}`,
       data: { reason: "checkout_failed" }
     });
     throw error;
@@ -736,16 +696,14 @@ var claim_default = withErrorHandling(async function handler(req, res) {
   await audit({
     action: "claim.opened",
     actorId: buyer.id,
-    subject: `hour:${claim.hourId}`,
+    subject: `bid:${claim.bidId}`,
     ipHash,
-    data: { bidId: claim.bidId, priceCents: claim.priceCents }
+    data: { bidId: claim.bidId, amountCents: claim.amountCents }
   });
   sendJson(res, 201, {
     ok: true,
-    hour: claim.hourId,
-    priceCents: claim.priceCents,
+    amountCents: claim.amountCents,
     checkoutUrl: checkout.url,
-    reservedSeconds: env.auction.reservationSeconds,
     listing: { name: displayName, tagline, link: linkUrl, logo: logoDataUrl }
   });
 });

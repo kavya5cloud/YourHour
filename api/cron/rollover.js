@@ -207,26 +207,6 @@ function getPool() {
 async function query(text, params = []) {
   return getPool().query(text, params);
 }
-async function tx(fn) {
-  const client = await getPool().connect();
-  try {
-    await client.query("BEGIN");
-    await client.query(`SET LOCAL lock_timeout = '5s'`);
-    await client.query(`SET LOCAL idle_in_transaction_session_timeout = '15s'`);
-    const result = await fn(client);
-    await client.query("COMMIT");
-    return result;
-  } catch (error) {
-    try {
-      await client.query("ROLLBACK");
-    } catch (rollbackError) {
-      console.error("rollback failed", { message: rollbackError.message });
-    }
-    throw error;
-  } finally {
-    client.release();
-  }
-}
 
 // lib/audit.ts
 async function audit(entry) {
@@ -244,35 +224,13 @@ async function audit(entry) {
 // lib/auction.ts
 var EPOCH_MS = Date.UTC(2024, 0, 1, 0, 0, 0);
 async function runRollover() {
-  const released = await releaseExpiredClaims();
+  const released = [];
   const { rows } = await query(
     `UPDATE hours SET status = 'unsold', settled_at = now()
       WHERE status = 'open' AND starts_at <= now()
       RETURNING id`
   );
   return { unsold: rows.map((row) => row.id), released };
-}
-async function releaseExpiredClaims() {
-  return tx(async (client) => {
-    const { rows } = await client.query(
-      `UPDATE bids SET status = 'lost', reserved_until = NULL
-        WHERE status = 'active'
-          AND reserved_until IS NOT NULL
-          AND reserved_until < now()
-          AND NOT EXISTS (
-            SELECT 1 FROM payments p WHERE p.bid_id = bids.id AND p.status = 'paid'
-          )
-        RETURNING id, hour_id`
-    );
-    if (rows.length > 0) {
-      await client.query(
-        `UPDATE payments SET status = 'expired'
-          WHERE bid_id = ANY($1::uuid[]) AND status = 'pending'`,
-        [rows.map((row) => row.id)]
-      );
-    }
-    return rows.map((row) => row.hour_id);
-  });
 }
 
 // lib/ratelimit.ts

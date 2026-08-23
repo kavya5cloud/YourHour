@@ -122,8 +122,24 @@ ALTER TABLE bids ADD COLUMN IF NOT EXISTS reserved_until timestamptz;
 -- by the database rather than by application logic, so two buyers checking out
 -- at the same instant cannot both end up owning the hour: the second INSERT
 -- fails on this index instead of racing.
-CREATE UNIQUE INDEX IF NOT EXISTS bids_one_live_claim_idx
-  ON bids (hour_id) WHERE status IN ('active', 'won');
+-- ------------------------------------------------------- ranked purchases
+-- A purchase does not name an hour. Buyers pay what they like, and the paid
+-- pool is ranked by amount to decide who airs next, so `hour_id` is null until
+-- an hour actually comes round and claims its occupant.
+ALTER TABLE bids ALTER COLUMN hour_id DROP NOT NULL;
+-- Same for the payment: it is taken before any hour is decided, and gets its
+-- hour stamped on it when the purchase is finally assigned one.
+ALTER TABLE payments ALTER COLUMN hour_id DROP NOT NULL;
+
+-- At most one purchase may hold any given hour. Assignment happens under the
+-- hour's row lock, so this is a backstop against ever double-booking a slot.
+CREATE UNIQUE INDEX IF NOT EXISTS bids_one_per_hour_idx
+  ON bids (hour_id) WHERE hour_id IS NOT NULL;
+
+-- The ranking: highest amount first, earliest purchase breaking ties. Partial,
+-- because only paid-and-unaired rows are ever ranked.
+CREATE INDEX IF NOT EXISTS bids_queue_idx
+  ON bids (amount_cents DESC, created_at ASC) WHERE status = 'won' AND hour_id IS NULL;
 
 ALTER TABLE bids DROP CONSTRAINT IF EXISTS bids_logo_bounded;
 ALTER TABLE bids ADD CONSTRAINT bids_logo_bounded
