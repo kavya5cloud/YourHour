@@ -1,5 +1,5 @@
 /**
- * The Hour -- client.
+ * GetYourHour -- client.
  *
  * Ground rules held throughout this file:
  *
@@ -26,7 +26,10 @@ const state = {
   clockOffset: 0,
   currentEndsAt: 0,
   hourStartedAt: 0,
-  minBidCents: 100,
+  /** The hour the visitor has picked off the board, if any. */
+  chosenHour: null,
+  /** The last state payload, so the submit button can be re-synced on click. */
+  lastState: null,
   polling: null,
 };
 
@@ -91,9 +94,10 @@ function renderOwner(data) {
     setText($('owner-name'), owner.name);
     setText($('owner-line'), owner.tagline);
     setText($('owner-paid'), `Paid ${money(owner.paidCents)}`);
-    // Take the first character for the badge without assuming it is ASCII.
-    const initial = [...owner.name.trim()][0] ?? '✦';
-    setText($('owner-logo'), initial);
+    // A logo if the winner supplied one, otherwise the first character of the
+    // name as a badge -- taken with a spread so non-ASCII names are not cut in
+    // half through a surrogate pair.
+    showOwnerLogo(owner.logo, [...owner.name.trim()][0] ?? '✦');
   } else {
     setText($('owner-name'), 'Open hour');
     setText(
@@ -103,7 +107,7 @@ function renderOwner(data) {
         : 'Nobody claimed this hour.',
     );
     setText($('owner-paid'), '');
-    setText($('owner-logo'), '✦');
+    showOwnerLogo(null, '✦');
   }
 
   const endsAt = new Date(currentHour.endsAt);
@@ -115,18 +119,81 @@ function renderOwner(data) {
   );
 }
 
-function renderLead(data) {
-  const lead = data.nextHour.lead;
-  state.minBidCents = data.nextHour.minBidCents;
-
-  setText($('leader-name'), lead ? lead.name : 'No bids yet');
-  setText($('leader-bid'), lead ? money(lead.amountCents) : money(state.minBidCents));
-
-  const amount = $('amount');
-  // Do not fight the user for the field they are currently typing in.
-  if (amount && document.activeElement !== amount) {
-    amount.value = String(Math.ceil(state.minBidCents / 100));
+/**
+ * Swap the owner badge between an image and a letter.
+ *
+ * `logo` is a data: URI the server has already validated and re-encoded, and
+ * the CSP allows `img-src data:`. It is set as an attribute on an <img>, never
+ * interpolated into markup, so nothing here can become an injection point.
+ */
+function showOwnerLogo(logo, fallbackInitial) {
+  const image = $('owner-logo-img');
+  const letter = $('owner-logo');
+  if (logo) {
+    image.src = logo;
+    image.hidden = false;
+    letter.hidden = true;
+  } else {
+    image.removeAttribute('src');
+    image.hidden = true;
+    letter.hidden = false;
+    setText(letter, fallbackInitial);
   }
+}
+
+/**
+ * The board of hours on sale.
+ *
+ * Rendered from the server's `board`, never computed here: the price of an hour
+ * and whether it is still free are both decisions the server owns, and a page
+ * that guessed them would show someone a price they cannot actually pay.
+ */
+function renderBoard(data) {
+  const board = $('board');
+  const chosen = state.chosenHour;
+  board.replaceChildren();
+
+  for (const slot of data.board) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'slot';
+    button.setAttribute('role', 'radio');
+    button.dataset.hour = String(slot.hour);
+    button.disabled = slot.taken;
+    button.setAttribute('aria-checked', String(slot.hour === chosen));
+    if (slot.hour === chosen) button.classList.add('chosen');
+    if (slot.taken) button.classList.add('taken');
+
+    const when = document.createElement('b');
+    when.textContent = new Date(slot.startsAt).toLocaleTimeString([], {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+    const price = document.createElement('span');
+    price.textContent = slot.taken ? 'Taken' : money(slot.priceCents);
+    button.append(when, price);
+    board.append(button);
+  }
+
+  // A chosen hour that someone else just bought has to be given up.
+  if (chosen && !data.board.some((slot) => slot.hour === chosen && !slot.taken)) {
+    state.chosenHour = null;
+    setText($('form-message'), 'That hour was just taken. Pick another.');
+  }
+  syncClaimButton(data);
+}
+
+/** Keep the submit button's label and enabled state tied to the chosen hour. */
+function syncClaimButton(data) {
+  const button = $('claim-submit');
+  const slot = data?.board.find((entry) => entry.hour === state.chosenHour);
+  if (!slot) {
+    button.disabled = true;
+    setText(button, 'Pick an hour first');
+    return;
+  }
+  button.disabled = false;
+  setText(button, `Claim this hour — ${money(slot.priceCents)}`);
 }
 
 function renderArchive(data) {
@@ -178,8 +245,9 @@ async function refresh() {
   try {
     const data = await api('/api/state');
     state.clockOffset = new Date(data.serverTime).getTime() - Date.now();
+    state.lastState = data;
     renderOwner(data);
-    renderLead(data);
+    renderBoard(data);
     renderArchive(data);
     tickClock();
   } catch {
@@ -225,121 +293,70 @@ $('message')?.addEventListener('input', (event) => {
 });
 
 /**
- * Send the bid.
+ * Choosing an hour.
  *
- * `email` is ignored by the server whenever a session is present, so passing an
- * empty string for a signed-in bidder is harmless.
+ * Delegated from the board container so it keeps working across re-renders --
+ * the board is rebuilt on every poll, and per-button listeners would be lost.
  */
-async function submitBid(email, messageEl, button) {
-  button.disabled = true;
-  try {
-    const result = await api('/api/bids', {
-      method: 'POST',
-      body: {
-        amount: Number.parseInt($('amount').value, 10),
-        name: $('name').value.trim(),
-        message: $('message').value,
-        link: $('link').value,
-        email,
-      },
-    });
-    return { ok: true, result };
-  } catch (error) {
-    // Covers the over-the-cap case too: the server has already sent a
-    // verification link and its message says so.
-    setText(messageEl, error.message);
-    return { ok: false };
-  } finally {
-    button.disabled = false;
+$('board')?.addEventListener('click', (event) => {
+  const button = event.target.closest('.slot');
+  if (!button || button.disabled) return;
+  state.chosenHour = Number(button.dataset.hour);
+  setText($('form-message'), '');
+  for (const slot of $('board').querySelectorAll('.slot')) {
+    const chosen = slot === button;
+    slot.classList.toggle('chosen', chosen);
+    slot.setAttribute('aria-checked', String(chosen));
   }
-}
+  syncClaimButton(state.lastState);
+});
 
-$('bid-form')?.addEventListener('submit', async (event) => {
+/**
+ * Claim the chosen hour.
+ *
+ * On success the server has reserved the hour and opened a Polar checkout, and
+ * the only thing left is to send the buyer there. Everything after that point
+ * -- taking the money, confirming the hour -- happens through the signed
+ * webhook, never through the browser coming back to a success URL.
+ */
+$('claim-form')?.addEventListener('submit', async (event) => {
   event.preventDefault();
   const message = $('form-message');
+  const button = $('claim-submit');
   setText(message, '');
 
-  // Client-side checks for responsiveness only. The server repeats all of them.
-  const name = $('name').value.trim();
-  if (!name) {
-    setText(message, 'Add your product first.');
-    $('name').focus();
-    return;
-  }
-  const dollars = Number.parseInt($('amount').value, 10);
-  if (!Number.isInteger(dollars) || dollars <= 0) {
-    setText(message, 'Enter a whole-dollar bid.');
-    $('amount').focus();
+  if (!state.chosenHour) {
+    setText(message, 'Pick an hour first.');
     return;
   }
 
-  // A bidder we can already reach goes straight through.
-  if (state.signedIn) {
-    const outcome = await submitBid('', message, $('bid-submit'));
-    if (outcome.ok) {
-      setText(message, outcome.result.message);
-      showReceipt(outcome.result);
-      await refresh();
-    }
-    return;
+  button.disabled = true;
+  const original = button.textContent;
+  setText(button, 'Opening checkout…');
+  try {
+    const result = await api('/api/claim', {
+      method: 'POST',
+      body: {
+        hourId: state.chosenHour,
+        name: $('name').value.trim(),
+        link: $('link').value,
+        message: $('message').value,
+        logo: logoDataUrl,
+        email: $('email').value.trim(),
+      },
+    });
+    // Hand off to Polar. The hour is held until they finish or time out.
+    window.location.href = result.checkoutUrl;
+  } catch (error) {
+    setText(message, error.message);
+    button.disabled = false;
+    setText(button, original);
+    // A taken hour means the board is stale; refresh it so they can see what
+    // is actually still free.
+    void refresh();
   }
-
-  // Otherwise ask where to send the checkout link, showing what they are
-  // committing to so the request has visible purpose.
-  setText($('email-step-amount'), money(dollars * 100));
-  setText($('email-step-product'), name);
-  setText($('email-step-message'), '');
-  $('email-step').showModal();
-  $('email').focus();
 });
 
-$('email-step-form')?.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const stepMessage = $('email-step-message');
-  const email = $('email').value.trim();
-  if (!email.includes('@')) {
-    setText(stepMessage, 'Enter a valid email address.');
-    $('email').focus();
-    return;
-  }
-
-  const outcome = await submitBid(email, stepMessage, $('email-step-confirm'));
-  if (!outcome.ok) return;
-
-  $('email-step').close();
-  setText($('form-message'), outcome.result.message);
-  showReceipt(outcome.result);
-  await refresh();
-});
-
-$('email-step-cancel')?.addEventListener('click', () => $('email-step').close());
-$('email-step')?.addEventListener('click', (event) => {
-  if (event.target === event.currentTarget) event.currentTarget.close();
-});
-
-function showReceipt(result) {
-  setText($('slip-name'), result.listing.name);
-  setText($('slip-bid'), money(result.amountCents));
-  setText($('slip-hour'), `Hour ${result.hour}`);
-  setText($('slip-number'), `#${result.hour}`);
-  $('bid-slip').classList.add('visible');
-
-  setText($('ticket-hour'), `Hour ${result.hour}`);
-  setText($('ticket-bid'), money(result.amountCents));
-  setText($('ticket-name'), result.listing.name);
-  setText($('ticket-time'), new Date(serverNow()).toLocaleString());
-  $('confirmation').showModal();
-
-  // The email lives in its own dialog, so resetting the bid form leaves it
-  // intact -- a bidder who gets outbid and bids again does not retype it.
-  $('bid-form').reset();
-  setText($('count'), '0 / 90');
-}
-
-$('confirm-bid')?.addEventListener('click', () => $('confirmation').close());
-$('confirmation')?.addEventListener('click', (event) => {
-  if (event.target === event.currentTarget) event.currentTarget.close();
-});
 
 $('signout')?.addEventListener('click', async () => {
   try {

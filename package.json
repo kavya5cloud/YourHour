@@ -1,14 +1,17 @@
 {
-  "name": "the-hour",
+  "name": "getyourhour",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test --test-concurrency=1 \"test/**/*.test.ts\"",
     "migrate": "node --experimental-strip-types scripts/migrate.ts",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "dev": "node --env-file=.env.local --experimental-strip-types scripts/dev.ts"
   },
   "dependencies": {
     "pg": "^8.13.1"

@@ -4,11 +4,13 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#faf6e8" />
-    <title>The Hour — one page, one owner</title>
+    <title>GetYourHour — one page, one owner</title>
     <meta name="description" content="One page, one owner, one hour. Bid for the next hour; half of net proceeds goes to charity." />
     <!-- No inline script or style anywhere on this page: the Content-Security-
          Policy served with it forbids both, which is what makes the policy a
          real defence rather than a formality. -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="mask-icon" href="/favicon.svg" color="#151815" />
     <link rel="stylesheet" href="/app.css" />
     <script src="/app.js" type="module" defer></script>
   </head>
@@ -16,7 +18,18 @@
     <main class="shell">
       <div class="content">
         <header class="masthead">
-          <div class="wordmark">The Hour</div>
+          <div class="brand">
+            <svg class="brand-logo" viewBox="10 20 460 300" fill="none" aria-hidden="true"
+                 stroke="currentColor" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M 40 128 L 165 128 L 207 88 A 140 140 0 1 1 272 302 L 90 302" />
+              <circle cx="320" cy="170" r="108" stroke-dasharray="620.6 58" stroke-dashoffset="395.1" />
+              <path d="M 320 62 L 320 78 M 428 170 L 412 170" />
+              <path d="M 320 170 L 277 108 M 320 170 L 372 140" />
+              <circle cx="320" cy="170" r="8" />
+              <path d="M 118 150 L 196 150 M 68 180 L 176 180 M 26 210 L 196 210 M 72 240 L 180 240 M 128 272 L 200 272" />
+            </svg>
+            <div class="wordmark">GetYourHour</div>
+          </div>
           <div class="status"><i class="live-dot"></i><span id="watchers">Live</span></div>
         </header>
 
@@ -25,7 +38,7 @@
             <div class="eyebrow"><span>Now showing</span><b id="current-label">Hour —</b></div>
             <article class="owner-card">
               <div class="owner-kicker">The current hour</div>
-              <div class="owner-orb" aria-hidden="true"><span id="owner-logo">✦</span></div>
+              <div class="owner-orb"><img id="owner-logo-img" alt="" hidden /><span id="owner-logo" aria-hidden="true">✦</span></div>
               <div class="owner-name" id="owner-name">Open hour</div>
               <p class="owner-line" id="owner-line">Nobody owns this hour yet.</p>
               <div class="owner-meta"><span id="owner-paid"></span><span id="expiry"></span></div>
@@ -40,33 +53,32 @@
           <div class="tear" aria-hidden="true"><i></i><i></i></div>
 
           <section class="auction-card" aria-labelledby="auction-title">
-            <div class="eyebrow"><span id="auction-title">Next up — make it yours</span><b id="next-label">Hour —</b></div>
-            <div class="leader" aria-live="polite">
-              <div><span class="leader-label">Current high bid</span><strong class="leader-name" id="leader-name">No bids yet</strong></div>
-              <div class="leader-bid" id="leader-bid">—</div>
-            </div>
+            <div class="eyebrow"><span id="auction-title">Pick your hour</span><b id="board-note">Sooner costs more</b></div>
 
-            <!-- One form. Bidding does not require signing in first: the email
-                 field creates the account, and the emailed checkout link is
-                 what proves the address when there is money at stake. -->
-            <form id="bid-form">
+            <!-- The board. Every hour on sale, soonest (and dearest) first.
+                 Choosing one sets the price; there is no bidding and nothing to
+                 win or lose -- you buy the slot outright. -->
+            <div class="board" id="board" role="radiogroup" aria-label="Hours on sale"></div>
+
+            <form id="claim-form">
               <div class="field"><label for="name">Your product</label><input id="name" name="name" maxlength="24" placeholder="yoursite.com" autocomplete="off" required /></div>
+              <div class="field"><label for="link">Link</label><input id="link" name="link" maxlength="200" placeholder="https://yoursite.com" autocomplete="off" inputmode="url" required /></div>
               <div class="field"><label for="message">One line <span class="count" id="count">0 / 90</span></label><input id="message" name="message" maxlength="90" placeholder="Say the thing." autocomplete="off" /></div>
-              <div class="field"><label for="link">Link (optional)</label><input id="link" name="link" maxlength="200" placeholder="https://yoursite.com" autocomplete="off" inputmode="url" /></div>
-              <div class="bid-row">
-                <div class="field"><label for="amount">Your bid</label><input id="amount" name="amount" inputmode="numeric" autocomplete="off" aria-describedby="bid-help" required /></div>
-                <button class="claim" id="bid-submit" type="submit">Place bid ✦</button>
+              <div class="field">
+                <label for="logo">Logo <span class="count">auto</span></label>
+                <div class="logo-field">
+                  <img class="logo-preview" id="logo-preview" alt="" hidden />
+                  <span class="logo-placeholder" id="logo-placeholder" aria-hidden="true">✦</span>
+                  <input id="logo" name="logo" type="file" accept="image/png,image/jpeg,image/webp" />
+                  <button class="logo-clear" id="logo-clear" type="button" hidden>Remove</button>
+                </div>
+                <p class="logo-note" id="logo-note">Leave this empty and we'll use your site's own icon. Or upload a PNG, JPEG, or WebP to override it.</p>
               </div>
+              <div class="field"><label for="email">Email <span class="count">for your receipt</span></label><input id="email" name="email" type="email" maxlength="254" placeholder="you@example.com" autocomplete="email" required /></div>
+              <button class="claim" id="claim-submit" type="submit" disabled>Pick an hour first</button>
               <p class="message" id="form-message" role="alert"></p>
-              <p class="rules" id="bid-help"><strong>No payment is taken now.</strong> If you lead at rollover, we email a Polar checkout link. You have five minutes to pay.</p>
-              <p class="charity-note">♡ <strong>50% of net proceeds from paid winning hours is donated to charity.</strong></p>
-              <section class="bid-slip" id="bid-slip" aria-live="polite" aria-label="Your bid receipt">
-                <div class="slip-head"><span>Your bid receipt</span><span id="slip-number">#—</span></div>
-                <div class="slip-row"><span>Listing</span><b id="slip-name">—</b></div>
-                <div class="slip-row"><span>Bid</span><b id="slip-bid">—</b></div>
-                <div class="slip-row"><span>Hour</span><b id="slip-hour">—</b></div>
-                <div class="slip-foot">If you lead at rollover, we email your Polar checkout link.</div>
-              </section>
+              <p class="rules" id="claim-help"><strong>You pay once, now.</strong> The hour is held for you while you check out, and it is yours the moment payment clears.</p>
+              <p class="charity-note">♡ <strong>50% of net proceeds is donated to charity.</strong></p>
             </form>
           </section>
 
@@ -87,38 +99,6 @@
     <!-- Step two. Only shown to a bidder we cannot already reach: the address is
          asked for at the moment it has an obvious purpose, rather than sitting
          in front of the bid form as a toll. -->
-    <dialog id="email-step" aria-labelledby="email-step-title">
-      <form class="dialog-inner thank-you-card" id="email-step-form" method="dialog">
-        <h2 id="email-step-title">Where do we send your checkout link?</h2>
-        <p>You are bidding <b id="email-step-amount">—</b> for <b id="email-step-product">—</b>.</p>
-        <div class="field">
-          <label for="email">Your email</label>
-          <input id="email" name="email" type="email" maxlength="254" placeholder="you@company.com" autocomplete="email" required />
-        </div>
-        <p class="message" id="email-step-message" role="alert"></p>
-        <p class="rules">Only used to send your checkout link if you win, and a note if you get outbid. <strong>No payment is taken now.</strong></p>
-        <div class="dialog-actions">
-          <button type="button" class="close" id="email-step-cancel">Back</button>
-          <button type="submit" id="email-step-confirm">Place bid ✦</button>
-        </div>
-      </form>
-    </dialog>
 
-    <dialog id="confirmation" aria-labelledby="dialog-title">
-      <div class="dialog-inner thank-you-card">
-        <div class="celebrate-mark" aria-hidden="true">🎉</div>
-        <h2 id="dialog-title">Bid saved!</h2>
-        <p>No payment was taken. If you lead at rollover, we email your Polar checkout link.</p>
-        <div class="receipt-cut"></div>
-        <div class="ticket-details">
-          <div><span>Hour</span><b id="ticket-hour">—</b></div>
-          <div><span>Your bid</span><b id="ticket-bid">—</b></div>
-          <div><span>Date &amp; time</span><b id="ticket-time">—</b></div>
-          <div><span>Listing</span><b id="ticket-name">—</b></div>
-        </div>
-        <div class="ticket-charity"><span>♡</span><div><strong>50% of net paid proceeds goes to charity</strong><small>Applies to paid winning hours.</small></div></div>
-        <div class="dialog-actions"><button id="confirm-bid" type="button">Got it</button></div>
-      </div>
-    </dialog>
   </body>
 </html>

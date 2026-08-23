@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="10 20 460 300" fill="none"
+     stroke="currentColor" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Outer sweep: a rail rises into the ring, wraps it, and exits along the base. -->
+  <path d="M 40 128 L 165 128 L 207 88 A 140 140 0 1 1 272 302 L 90 302" />
+  <!-- Dial, drawn as a dashed circle so the stroke opens at the lower left. -->
+  <circle cx="320" cy="170" r="108" stroke-dasharray="620.6 58" stroke-dashoffset="395.1" />
+  <!-- Ticks at 12 and 3. -->
+  <path d="M 320 62 L 320 78 M 428 170 L 412 170" />
+  <!-- Hands and hub. -->
+  <path d="M 320 170 L 277 108 M 320 170 L 372 140" />
+  <circle cx="320" cy="170" r="8" />
+  <!-- Motion lines. -->
+  <path d="M 118 150 L 196 150 M 68 180 L 176 180 M 26 210 L 196 210 M 72 240 L 180 240 M 128 272 L 200 272" />
+</svg>

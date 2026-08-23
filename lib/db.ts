@@ -16,7 +16,7 @@ pg.types.setTypeParser(20, (value: string) => Number.parseInt(value, 10));
 
 declare global {
   // eslint-disable-next-line no-var
-  var __theHourPool: pg.Pool | undefined;
+  var __getYourHourPool: pg.Pool | undefined;
 }
 
 /**
@@ -25,8 +25,8 @@ declare global {
  * Neon/Supabase pooled endpoint) in production.
  */
 function getPool(): pg.Pool {
-  if (!globalThis.__theHourPool) {
-    globalThis.__theHourPool = new Pool({
+  if (!globalThis.__getYourHourPool) {
+    globalThis.__getYourHourPool = new Pool({
       connectionString: env.databaseUrl,
       max: 3,
       idleTimeoutMillis: 10_000,
@@ -37,11 +37,11 @@ function getPool(): pg.Pool {
       statement_timeout: 8_000,
       query_timeout: 8_000,
     });
-    globalThis.__theHourPool.on('error', (error) => {
+    globalThis.__getYourHourPool.on('error', (error) => {
       console.error('pg pool error', { message: error.message });
     });
   }
-  return globalThis.__theHourPool;
+  return globalThis.__getYourHourPool;
 }
 
 export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(

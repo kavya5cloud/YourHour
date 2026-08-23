@@ -17,6 +17,8 @@ export type AuditAction =
   | 'logout'
   | 'bid.placed'
   | 'bid.rejected'
+  | 'claim.opened'
+  | 'claim.released'
   | 'hour.rolled'
   | 'hour.awaiting_payment'
   | 'hour.owned'

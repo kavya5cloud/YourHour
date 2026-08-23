@@ -23,8 +23,20 @@ if (!databaseUrl) {
   process.env.DATABASE_URL = databaseUrl;
 
   const emails: Array<{ to: string; body: string }> = [];
+  let checkouts = 0;
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
+    if (url.includes('/v1/checkouts')) {
+      checkouts += 1;
+      return new Response(
+        JSON.stringify({ id: `chk_${checkouts}`, url: `https://checkout.polar.sh/chk_${checkouts}` }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    // The favicon lookup is best-effort; refusing it exercises the null path.
+    if (url.includes('google.com/s2/favicons')) {
+      return new Response('nope', { status: 404 });
+    }
     if (url.includes('resend.com')) {
       const parsed = JSON.parse(String(init?.body ?? '{}'));
       emails.push({ to: parsed.to?.[0] ?? '', body: parsed.text ?? '' });
@@ -34,14 +46,18 @@ if (!databaseUrl) {
   }) as typeof fetch;
 
   const { query } = await import('../lib/db.ts');
+  const auctionModule = await import('../lib/auction.ts');
   const stateHandler = (await import('../api/state.ts')).default;
-  const bidsHandler = (await import('../api/bids.ts')).default;
+  const claimHandler = (await import('../api/claim.ts')).default;
   const meHandler = (await import('../api/auth/me.ts')).default;
   const requestLinkHandler = (await import('../api/auth/request-link.ts')).default;
   const cronHandler = (await import('../api/cron/rollover.ts')).default;
   const { createSession, csrfTokenFor, SESSION_COOKIE } = await import('../lib/session.ts');
 
-  const ORIGIN = 'https://thehour.test';
+  const ORIGIN = 'https://getyourhour.test';
+
+  /** The soonest claimable hour. */
+  const nextHourId = (): number => auctionModule.hourIdAt(Date.now()) + 1;
 
   /** Mount one handler on a throwaway server and return its base URL. */
   async function serve(handler: (req: never, res: never) => Promise<void>): Promise<{ url: string; server: Server }> {
@@ -122,39 +138,37 @@ if (!databaseUrl) {
     }
   });
 
-  test('a first-time bidder can bid without signing in first', async () => {
+  test('a first-time buyer can claim without signing in first', async () => {
     await reset();
-    const { url, server } = await serve(bidsHandler);
+    const { url, server } = await serve(claimHandler);
     try {
-      const response = await call(`${url}/api/bids`, {
+      const response = await call(`${url}/api/claim`, {
         method: 'POST',
         headers: { origin: ORIGIN, 'content-type': 'application/json' },
-        body: JSON.stringify({ amount: 20, name: 'example.com', email: 'new@example.test' }),
+        body: JSON.stringify({
+          hourId: nextHourId(),
+          name: 'example.com',
+          link: 'example.com',
+          email: 'new@example.test',
+        }),
       });
-      assert.equal(response.status, 201, 'no sign-in gate on bidding');
+      assert.equal(response.status, 201, 'no sign-in gate on claiming');
       const body = JSON.parse(response.text);
-      assert.equal(body.amountCents, 2000);
-      assert.equal(body.verified, false);
-
-      // The bid form is the signup: the account now exists, unverified.
-      const { rows } = await query<{ email_verified_at: Date | null }>(
-        `SELECT email_verified_at FROM users WHERE email = 'new@example.test'`,
-      );
-      assert.equal(rows.length, 1, 'the account was created by the bid');
-      assert.equal(rows[0]!.email_verified_at, null, 'and is not verified yet');
+      assert.equal(body.priceCents, 5000, 'the next hour is priced at the base');
+      assert.ok(body.checkoutUrl.startsWith('https://'), 'a checkout URL comes back');
     } finally {
       server.close();
     }
   });
 
-  test('a bid with no email and no session is rejected', async () => {
+  test('a claim with no email and no session is rejected', async () => {
     await reset();
-    const { url, server } = await serve(bidsHandler);
+    const { url, server } = await serve(claimHandler);
     try {
-      const response = await call(`${url}/api/bids`, {
+      const response = await call(`${url}/api/claim`, {
         method: 'POST',
         headers: { origin: ORIGIN, 'content-type': 'application/json' },
-        body: JSON.stringify({ amount: 20, name: 'example.com' }),
+        body: JSON.stringify({ hourId: nextHourId(), name: 'example.com', link: 'example.com' }),
       });
       assert.equal(response.status, 400);
       assert.match(JSON.parse(response.text).message, /email/i);
@@ -163,59 +177,61 @@ if (!databaseUrl) {
     }
   });
 
-  test('an unverified bidder is capped, and gets a link instead', async () => {
+  test('a claim without a link is rejected', async () => {
     await reset();
-    const { url, server } = await serve(bidsHandler);
+    const { url, server } = await serve(claimHandler);
     try {
-      emails.length = 0;
-      // Default MAX_UNVERIFIED_BID_CENTS is 5000 ($50).
-      const response = await call(`${url}/api/bids`, {
+      const response = await call(`${url}/api/claim`, {
         method: 'POST',
         headers: { origin: ORIGIN, 'content-type': 'application/json' },
-        body: JSON.stringify({ amount: 500, name: 'example.com', email: 'big@example.test' }),
+        body: JSON.stringify({
+          hourId: nextHourId(),
+          name: 'example.com',
+          email: 'nolink@example.test',
+        }),
       });
-      assert.equal(response.status, 403);
-      const body = JSON.parse(response.text);
-      assert.equal(body.error, 'verification_required');
-      assert.equal(body.maxUnverifiedCents, 5000);
-
-      // Nothing was written, and a verification link went out.
-      const { rows } = await query<{ count: string }>(`SELECT count(*)::text FROM bids`);
-      assert.equal(rows[0]!.count, '0', 'the over-cap bid must not be stored');
-      assert.equal(emails.length, 1, 'a verification link was sent');
-      assert.equal(emails[0]!.to, 'big@example.test');
+      assert.equal(response.status, 400);
+      assert.equal(JSON.parse(response.text).error, 'link_required');
     } finally {
       server.close();
     }
   });
 
-  test('a verified bidder is not capped', async () => {
+  test('claiming an hour that is already taken is a clean conflict', async () => {
     await reset();
-    await query(
-      `INSERT INTO users (email, email_verified_at) VALUES ('trusted@example.test', now())`,
-    );
-    const { url, server } = await serve(bidsHandler);
+    const { url, server } = await serve(claimHandler);
     try {
-      const response = await call(`${url}/api/bids`, {
+      const hourId = nextHourId();
+      const body = (email: string): string =>
+        JSON.stringify({ hourId, name: 'example.com', link: 'example.com', email });
+
+      const first = await call(`${url}/api/claim`, {
         method: 'POST',
         headers: { origin: ORIGIN, 'content-type': 'application/json' },
-        body: JSON.stringify({ amount: 500, name: 'example.com', email: 'trusted@example.test' }),
+        body: body('one@example.test'),
       });
-      assert.equal(response.status, 201, 'a confirmed address clears the ceiling');
-      assert.equal(JSON.parse(response.text).verified, true);
+      assert.equal(first.status, 201);
+
+      const second = await call(`${url}/api/claim`, {
+        method: 'POST',
+        headers: { origin: ORIGIN, 'content-type': 'application/json' },
+        body: body('two@example.test'),
+      });
+      assert.equal(second.status, 409, 'the hour is not sold twice');
+      assert.equal(JSON.parse(second.text).error, 'hour_taken');
     } finally {
       server.close();
     }
   });
 
-  test('POST /api/bids from a foreign origin is refused before auth', async () => {
+  test('POST /api/claim from a foreign origin is refused before auth', async () => {
     await reset();
-    const { url, server } = await serve(bidsHandler);
+    const { url, server } = await serve(claimHandler);
     try {
-      const response = await call(`${url}/api/bids`, {
+      const response = await call(`${url}/api/claim`, {
         method: 'POST',
         headers: { origin: 'https://evil.example', 'content-type': 'application/json' },
-        body: JSON.stringify({ amount: 50, name: 'example.com' }),
+        body: JSON.stringify({ hourId: nextHourId(), name: 'example.com', link: 'example.com' }),
       });
       assert.equal(response.status, 403);
       assert.match(JSON.parse(response.text).message, /Cross-origin/);
@@ -224,66 +240,6 @@ if (!databaseUrl) {
     }
   });
 
-  test('POST /api/bids with a valid session but no CSRF header is 403', async () => {
-    await reset();
-    const { rows } = await query<{ id: string }>(
-      `INSERT INTO users (email) VALUES ('csrf@example.test') RETURNING id`,
-    );
-    const session = await createSession(rows[0]!.id, '127.0.0.1', 'test');
-
-    const { url, server } = await serve(bidsHandler);
-    try {
-      const response = await call(`${url}/api/bids`, {
-        method: 'POST',
-        headers: {
-          origin: ORIGIN,
-          'content-type': 'application/json',
-          cookie: `${SESSION_COOKIE}=${session.token}`,
-        },
-        body: JSON.stringify({ amount: 50, name: 'example.com' }),
-      });
-      assert.equal(response.status, 403);
-      assert.match(JSON.parse(response.text).message, /CSRF/);
-    } finally {
-      server.close();
-    }
-  });
-
-  test('a full authenticated bid succeeds and echoes normalised content', async () => {
-    await reset();
-    const { rows } = await query<{ id: string }>(
-      `INSERT INTO users (email) VALUES ('bidder@example.test') RETURNING id`,
-    );
-    const session = await createSession(rows[0]!.id, '127.0.0.1', 'test');
-    const { rows: sessionRows } = await query<{ id: string }>(
-      `SELECT id FROM sessions WHERE user_id = $1`,
-      [rows[0]!.id],
-    );
-    const csrf = csrfTokenFor(sessionRows[0]!.id);
-
-    const { url, server } = await serve(bidsHandler);
-    try {
-      const response = await call(`${url}/api/bids`, {
-        method: 'POST',
-        headers: {
-          origin: ORIGIN,
-          'content-type': 'application/json',
-          cookie: `${SESSION_COOKIE}=${session.token}`,
-          'x-csrf-token': csrf,
-        },
-        // Deliberately messy input: extra whitespace and a newline.
-        body: JSON.stringify({ amount: 50, name: '  example.com  ', message: 'two\nlines' }),
-      });
-
-      assert.equal(response.status, 201);
-      const body = JSON.parse(response.text);
-      assert.equal(body.amountCents, 5000);
-      assert.equal(body.listing.name, 'example.com', 'name is trimmed');
-      assert.equal(body.listing.tagline, 'two lines', 'newline became a space, not a deletion');
-    } finally {
-      server.close();
-    }
-  });
 
   test('an unauthenticated caller gets signedIn:false and no CSRF token', async () => {
     await reset();
@@ -346,9 +302,9 @@ if (!databaseUrl) {
 
   test('a malformed JSON body is rejected without leaking internals', async () => {
     await reset();
-    const { url, server } = await serve(bidsHandler);
+    const { url, server } = await serve(claimHandler);
     try {
-      const response = await call(`${url}/api/bids`, {
+      const response = await call(`${url}/api/claim`, {
         method: 'POST',
         headers: { origin: ORIGIN, 'content-type': 'application/json' },
         body: '{not json',
@@ -363,6 +319,6 @@ if (!databaseUrl) {
   });
 
   test.after(async () => {
-    await globalThis.__theHourPool?.end();
+    await globalThis.__getYourHourPool?.end();
   });
 }

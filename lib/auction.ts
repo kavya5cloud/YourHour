@@ -23,7 +23,6 @@ import { audit } from './audit.ts';
 import { conflict, badRequest } from './http.ts';
 import { formatMoney } from './validate.ts';
 import { createCheckout } from './polar.ts';
-import { sendWinnerCheckout } from './mailer.ts';
 
 export const HOUR_MS = 3_600_000;
 
@@ -105,8 +104,21 @@ export interface PublicState {
     id: number;
     endsAt: string;
     status: string;
-    owner: { name: string; tagline: string; link: string | null; paidCents: number } | null;
+    owner: {
+      name: string;
+      tagline: string;
+      link: string | null;
+      logo: string | null;
+      paidCents: number;
+    } | null;
   };
+  /** The hours on sale right now, soonest first. */
+  board: Array<{
+    hour: number;
+    startsAt: string;
+    priceCents: number;
+    taken: boolean;
+  }>;
   nextHour: {
     id: number;
     startsAt: string;
@@ -135,10 +147,11 @@ export async function getPublicState(): Promise<PublicState> {
       display_name: string | null;
       tagline: string | null;
       link_url: string | null;
+      logo_data_url: string | null;
       amount_cents: number | null;
       moderation: string | null;
     }>(
-      `SELECT h.status, h.ends_at, b.display_name, b.tagline, b.link_url, b.amount_cents, b.moderation
+      `SELECT h.status, h.ends_at, b.display_name, b.tagline, b.link_url, b.logo_data_url, b.amount_cents, b.moderation
          FROM hours h
          LEFT JOIN bids b ON b.id = h.winning_bid_id
         WHERE h.id = $1`,
@@ -178,7 +191,30 @@ export async function getPublicState(): Promise<PublicState> {
   const display = (value: string | null, moderation: string | null): string =>
     moderation === 'approved' ? (value ?? '') : UNDER_REVIEW;
 
+  // The board: every hour inside the horizon, with its price and whether a
+  // live claim already holds it. A reserved-but-unpaid hour counts as taken,
+  // which is what stops two people buying the same slot.
+  const horizon = env.auction.claimHorizonHours;
+  const { rows: takenRows } = await query<{ hour_id: number }>(
+    `SELECT hour_id FROM bids
+      WHERE status IN ('active', 'won')
+        AND (reserved_until IS NULL OR reserved_until > now())
+        AND hour_id > $1 AND hour_id <= $2`,
+    [currentId, currentId + horizon],
+  );
+  const taken = new Set(takenRows.map((row) => row.hour_id));
+  const board = Array.from({ length: horizon }, (_, index) => {
+    const hour = currentId + index + 1;
+    return {
+      hour,
+      startsAt: hourStartsAt(hour).toISOString(),
+      priceCents: priceForHour(hour, now),
+      taken: taken.has(hour),
+    };
+  });
+
   return {
+    board,
     serverTime: new Date(now).toISOString(),
     currentHour: {
       id: currentId,
@@ -190,6 +226,7 @@ export async function getPublicState(): Promise<PublicState> {
               name: display(currentRow.display_name, currentRow.moderation),
               tagline: currentRow.moderation === 'approved' ? (currentRow.tagline ?? '') : '',
               link: currentRow.moderation === 'approved' ? currentRow.link_url : null,
+              logo: currentRow.moderation === 'approved' ? currentRow.logo_data_url : null,
               paidCents: currentRow.amount_cents ?? 0,
             }
           : null,
@@ -220,299 +257,41 @@ export async function getPublicState(): Promise<PublicState> {
 
 // -------------------------------------------------------------- bidding
 
-export interface PlaceBidInput {
-  userId: string;
-  amountCents: number;
-  displayName: string;
-  tagline: string;
-  linkUrl: string | null;
-  ipHash: Buffer | null;
-}
-
-export interface PlaceBidResult {
-  bidId: string;
-  hourId: number;
-  amountCents: number;
-  previousLeaderUserId: string | null;
-}
-
-/**
- * Place a bid on the next hour.
- *
- * The amount is re-checked against the standing lead *inside* the lock. The
- * client's idea of the current price is treated as advisory only; two bidders
- * submitting the same amount at the same moment cannot both succeed.
- */
-export async function placeBid(input: PlaceBidInput): Promise<PlaceBidResult> {
-  return tx(async (client) => {
-    const now = Date.now();
-    const hourId = hourIdAt(now) + 1;
-    const hour = await lockHour(client, hourId);
-
-    if (hour.status !== 'open') {
-      throw conflict('Bidding on that hour has closed.', 'hour_closed');
-    }
-    // The row lock does not stop the clock; re-check the deadline under it.
-    if (hour.starts_at.getTime() <= now) {
-      throw conflict('That hour just started. Bid on the next one.', 'hour_started');
-    }
-
-    const { rows: leadRows } = await client.query<{ id: string; user_id: string; amount_cents: number }>(
-      `SELECT id, user_id, amount_cents
-         FROM bids
-        WHERE hour_id = $1 AND status = 'active'
-        ORDER BY amount_cents DESC, created_at ASC
-        LIMIT 1`,
-      [hourId],
-    );
-    const lead = leadRows[0];
-
-    const required = lead ? lead.amount_cents + env.auction.minIncrementCents : env.auction.minBidCents;
-    if (input.amountCents < required) {
-      throw conflict(`Bid ${formatMoney(required)} or more to take the lead.`, 'bid_too_low');
-    }
-
-    // Demote the standing bids before inserting, so 'active' always holds
-    // exactly the live leader for this hour.
-    await client.query(`UPDATE bids SET status = 'outbid' WHERE hour_id = $1 AND status = 'active'`, [hourId]);
-
-    const moderation = env.auction.autoApproveListings ? 'approved' : 'pending';
-    const { rows } = await client.query<{ id: string }>(
-      `INSERT INTO bids (hour_id, user_id, amount_cents, display_name, tagline, link_url, ip_hash, moderation)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING id`,
-      [
-        hourId,
-        input.userId,
-        input.amountCents,
-        input.displayName,
-        input.tagline,
-        input.linkUrl,
-        input.ipHash,
-        moderation,
-      ],
-    );
-    const bidId = rows[0]!.id;
-
-    return {
-      bidId,
-      hourId,
-      amountCents: input.amountCents,
-      previousLeaderUserId: lead && lead.user_id !== input.userId ? lead.user_id : null,
-    };
-  });
-}
-
-// ------------------------------------------------------------- rollover
-
-/**
- * Open a payment window for a bid: record the attempt, create the hosted
- * checkout, and hand back the URL to email.
- *
- * The payment row is written before the provider call so that a crash between
- * the two leaves an auditable pending record rather than a silent gap.
- */
-async function openPaymentWindow(
-  client: pg.PoolClient,
-  bid: { id: string; user_id: string; amount_cents: number; email: string },
-  hourId: number,
-): Promise<{ paymentId: string; checkoutUrl: string } | null> {
-  const split = splitProceeds(bid.amount_cents);
-  const expiresAt = new Date(Date.now() + env.auction.paymentWindowSeconds * 1000);
-
-  const { rows } = await client.query<{ id: string }>(
-    `INSERT INTO payments (hour_id, bid_id, user_id, amount_cents, fee_cents, charity_cents, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     RETURNING id`,
-    [hourId, bid.id, bid.user_id, bid.amount_cents, split.feeCents, split.charityCents, expiresAt],
-  );
-  const paymentId = rows[0]!.id;
-
-  let checkout;
-  try {
-    checkout = await createCheckout({
-      amountCents: bid.amount_cents,
-      email: bid.email,
-      hourId,
-      bidId: bid.id,
-      paymentId,
-    });
-  } catch (error) {
-    // Provider unreachable: fail this attempt so the next pass can promote the
-    // following bidder instead of leaving the hour stuck.
-    await client.query(`UPDATE payments SET status = 'failed' WHERE id = $1`, [paymentId]);
-    console.error('checkout creation failed', { hourId, message: (error as Error).message });
-    return null;
-  }
-
-  await client.query(`UPDATE payments SET provider_checkout_id = $1 WHERE id = $2`, [checkout.id, paymentId]);
-  return { paymentId, checkoutUrl: checkout.url };
-}
-
-/** The highest live bid for an hour that has not already had its turn. */
-async function nextEligibleBid(client: pg.PoolClient, hourId: number) {
-  const { rows } = await client.query<{
-    id: string;
-    user_id: string;
-    amount_cents: number;
-    email: string;
-  }>(
-    `SELECT b.id, b.user_id, b.amount_cents, u.email
-       FROM bids b
-       JOIN users u ON u.id = b.user_id
-      WHERE b.hour_id = $1
-        AND b.status IN ('active', 'outbid')
-        AND u.disabled_at IS NULL
-        -- A bid whose only payment rows are 'failed' never got a usable
-        -- checkout link, so it is still owed its turn. Excluding every bid with
-        -- any payment row would silently skip the top bidder forever after one
-        -- provider outage.
-        AND NOT EXISTS (
-          SELECT 1 FROM payments p WHERE p.bid_id = b.id AND p.status <> 'failed'
-        )
-        -- ...but not forever: give up on a bid after three failed attempts so a
-        -- sustained provider outage cannot stall the hour indefinitely.
-        AND (SELECT count(*) FROM payments p2 WHERE p2.bid_id = b.id AND p2.status = 'failed') < 3
-      ORDER BY b.amount_cents DESC, b.created_at ASC
-      LIMIT 1`,
-    [hourId],
-  );
-  return rows[0] ?? null;
-}
+// ------------------------------------------------------------------ rollover
 
 export interface RolloverReport {
-  closed: number[];
-  expired: number[];
-  promoted: number[];
+  /** Hours that started without ever being paid for. */
   unsold: number[];
+  /** Hours put back on sale because their buyer abandoned checkout. */
+  released: number[];
 }
 
 /**
- * The scheduled job. Idempotent: running it twice in the same minute, or not at
- * all for several hours, both converge to the correct state, because every
- * decision is derived from stored timestamps rather than from having been
- * invoked at exactly the right moment.
+ * The scheduled job.
+ *
+ * Under the claim model this is nearly nothing: hours are bought outright and
+ * settled by the Polar webhook, so there is no winner to pick, no payment
+ * window to open, and no next bidder to promote. All that remains is marking
+ * hours that nobody bought, and returning abandoned reservations to the board.
+ *
+ * Still idempotent: every decision comes from stored timestamps, so running it
+ * twice in a minute or not at all for a day both converge on the same state.
  */
 export async function runRollover(): Promise<RolloverReport> {
-  const report: RolloverReport = { closed: [], expired: [], promoted: [], unsold: [] };
-  const now = Date.now();
-  const currentId = hourIdAt(now);
+  const released = await releaseExpiredClaims();
 
-  // 1. Close every hour whose bidding period has elapsed.
-  const { rows: dueRows } = await query<{ id: number }>(
-    `SELECT id FROM hours WHERE status = 'open' AND starts_at <= now() ORDER BY id ASC LIMIT 50`,
+  // An hour that has started and was never paid for is simply unsold. Hours
+  // that were paid for are already 'owned', set by the webhook, so they are
+  // untouched by this.
+  const { rows } = await query<{ id: number }>(
+    `UPDATE hours SET status = 'unsold', settled_at = now()
+      WHERE status = 'open' AND starts_at <= now()
+      RETURNING id`,
   );
 
-  for (const due of dueRows) {
-    const outcome = await tx(async (client) => {
-      const hour = await lockHour(client, due.id);
-      if (hour.status !== 'open') return null; // another pass got here first
-
-      const winner = await nextEligibleBid(client, due.id);
-      if (!winner) {
-        await client.query(`UPDATE hours SET status = 'unsold', settled_at = now() WHERE id = $1`, [due.id]);
-        report.unsold.push(due.id);
-        return null;
-      }
-
-      const opened = await openPaymentWindow(client, winner, due.id);
-      if (!opened) return null; // retried on the next pass
-
-      await client.query(`UPDATE bids SET status = 'won' WHERE id = $1`, [winner.id]);
-      await client.query(
-        `UPDATE hours SET status = 'awaiting_payment', winning_bid_id = $1 WHERE id = $2`,
-        [winner.id, due.id],
-      );
-      report.closed.push(due.id);
-      return { email: winner.email, amount: winner.amount_cents, url: opened.checkoutUrl, hourId: due.id };
-    });
-
-    if (outcome) {
-      await audit({
-        action: 'hour.awaiting_payment',
-        subject: `hour:${outcome.hourId}`,
-        data: { amountCents: outcome.amount },
-      });
-      // Email outside the transaction: a mail failure must not roll back a
-      // committed auction result.
-      await sendWinnerCheckout(outcome.email, {
-        hour: outcome.hourId,
-        amount: formatMoney(outcome.amount),
-        checkoutUrl: outcome.url,
-        minutes: Math.round(env.auction.paymentWindowSeconds / 60),
-      }).catch((error) => console.error('winner email failed', { message: (error as Error).message }));
-    }
-  }
-
-  // 2. Expire payment windows that ran out, and offer the hour to the next bidder.
-  const { rows: staleRows } = await query<{ hour_id: number }>(
-    `SELECT DISTINCT hour_id FROM payments WHERE status = 'pending' AND expires_at < now() LIMIT 50`,
-  );
-
-  for (const stale of staleRows) {
-    const outcome = await tx(async (client) => {
-      await lockHour(client, stale.hour_id);
-
-      const { rows: expiredRows } = await client.query<{ id: string; bid_id: string }>(
-        `UPDATE payments SET status = 'expired'
-          WHERE hour_id = $1 AND status = 'pending' AND expires_at < now()
-          RETURNING id, bid_id`,
-        [stale.hour_id],
-      );
-      if (expiredRows.length === 0) return null;
-
-      for (const expired of expiredRows) {
-        await client.query(`UPDATE bids SET status = 'forfeited' WHERE id = $1`, [expired.bid_id]);
-      }
-      report.expired.push(stale.hour_id);
-
-      // The hour may already be over; only promote if there is time left to own it.
-      const { rows: hourRows } = await client.query<{ ends_at: Date }>(
-        `SELECT ends_at FROM hours WHERE id = $1`,
-        [stale.hour_id],
-      );
-      const endsAt = hourRows[0]?.ends_at;
-      if (!endsAt || endsAt.getTime() <= Date.now()) {
-        await client.query(
-          `UPDATE hours SET status = 'forfeited', winning_bid_id = NULL, settled_at = now() WHERE id = $1`,
-          [stale.hour_id],
-        );
-        return null;
-      }
-
-      const next = await nextEligibleBid(client, stale.hour_id);
-      if (!next) {
-        await client.query(
-          `UPDATE hours SET status = 'forfeited', winning_bid_id = NULL, settled_at = now() WHERE id = $1`,
-          [stale.hour_id],
-        );
-        return null;
-      }
-
-      const opened = await openPaymentWindow(client, next, stale.hour_id);
-      if (!opened) return null;
-
-      await client.query(`UPDATE bids SET status = 'won' WHERE id = $1`, [next.id]);
-      await client.query(`UPDATE hours SET winning_bid_id = $1 WHERE id = $2`, [next.id, stale.hour_id]);
-      report.promoted.push(stale.hour_id);
-      return { email: next.email, amount: next.amount_cents, url: opened.checkoutUrl, hourId: stale.hour_id };
-    });
-
-    if (outcome) {
-      await sendWinnerCheckout(outcome.email, {
-        hour: outcome.hourId,
-        amount: formatMoney(outcome.amount),
-        checkoutUrl: outcome.url,
-        minutes: Math.round(env.auction.paymentWindowSeconds / 60),
-      }).catch((error) => console.error('promotion email failed', { message: (error as Error).message }));
-    }
-  }
-
-  // 3. Make sure the hour currently taking bids exists.
-  await ensureHour(null, currentId + 1);
-
-  return report;
+  return { unsold: rows.map((row) => row.id), released };
 }
+
 
 // -------------------------------------------------------------- payment
 
@@ -537,7 +316,7 @@ export async function markPaid(paymentId: string, providerOrderId: string | null
     await lockHour(client, payment.hour_id);
     await client.query(
       `UPDATE hours SET status = 'owned', winning_bid_id = $1, settled_at = now()
-        WHERE id = $2 AND status IN ('awaiting_payment', 'forfeited')`,
+        WHERE id = $2 AND status IN ('open', 'awaiting_payment', 'forfeited')`,
       [payment.bid_id, payment.hour_id],
     );
     await client.query(`UPDATE bids SET status = 'won' WHERE id = $1`, [payment.bid_id]);
@@ -594,4 +373,174 @@ export function assertBiddingWindowOpen(): void {
   const now = Date.now();
   const nextStart = hourStartsAt(hourIdAt(now) + 1).getTime();
   if (nextStart - now <= 0) throw badRequest('Bidding is momentarily closed while the hour rolls over.', 'rolling_over');
+}
+
+/**
+ * Price of a given hour, in cents.
+ *
+ * The curve is the whole business model in one line: an hour costs more the
+ * sooner it is. That is what "pay more, go sooner" means here -- a buyer moves
+ * up by paying a nearer hour's price, never by displacing someone who already
+ * bought. Nobody's slot can be taken away once paid for, which is why this
+ * design needs no way to tell anyone their time changed.
+ */
+export function priceForHour(hourId: number, now: number = Date.now()): number {
+  const currentId = hourIdAt(now);
+  const hoursAway = hourId - currentId;
+  if (hoursAway < 1) return 0; // in the past or already running: not for sale
+  const { claimBaseCents, claimFloorCents } = env.auction;
+  return Math.max(claimFloorCents, Math.round(claimBaseCents / hoursAway));
+}
+
+// ------------------------------------------------------------------ claiming
+
+export interface ClaimInput {
+  hourId: number;
+  userId: string;
+  displayName: string;
+  tagline: string;
+  linkUrl: string;
+  logoDataUrl: string | null;
+  ipHash: Buffer | null;
+}
+
+export interface ClaimResult {
+  bidId: string;
+  paymentId: string;
+  hourId: number;
+  priceCents: number;
+}
+
+/**
+ * Reserve one specific hour for a buyer and open a payment for it.
+ *
+ * The concurrency argument is the partial unique index on `bids (hour_id)`
+ * where the status is live: two buyers who reach this line at the same instant
+ * cannot both succeed, because the second INSERT violates that index and is
+ * turned into a 409 below. The database decides, not a read-then-write in
+ * application code that a race could interleave.
+ *
+ * The reservation is what makes the hour un-sellable while its buyer is inside
+ * Polar checkout. If they never finish, `releaseExpiredClaims` puts the hour
+ * back on sale.
+ */
+export async function claimHour(input: ClaimInput): Promise<ClaimResult> {
+  const now = Date.now();
+  const currentId = hourIdAt(now);
+  const hoursAway = input.hourId - currentId;
+  if (hoursAway < 1) {
+    throw conflict('That hour has already started. Pick a later one.', 'hour_past');
+  }
+  if (hoursAway > env.auction.claimHorizonHours) {
+    throw conflict('That hour is too far out to claim yet.', 'hour_too_far');
+  }
+
+  const priceCents = priceForHour(input.hourId, now);
+  const split = splitProceeds(priceCents);
+  const reservedUntil = new Date(now + env.auction.reservationSeconds * 1000);
+
+  return tx(async (client) => {
+    await ensureHour(client, input.hourId);
+    await lockHour(client, input.hourId);
+
+    // Self-healing: drop this hour's own expired reservation before inserting.
+    // The unique index counts any live claim, so without this an abandoned
+    // checkout would keep the hour off sale until the cron job happened to run
+    // -- which on a plan with once-a-day cron could be most of a day. Doing it
+    // here, under the hour lock, means an abandoned hour is sellable the moment
+    // its hold lapses, whether or not the scheduler ever fires.
+    await client.query(
+      `UPDATE bids SET status = 'lost', reserved_until = NULL
+        WHERE hour_id = $1 AND status = 'active'
+          AND reserved_until IS NOT NULL AND reserved_until < now()
+          AND NOT EXISTS (
+            SELECT 1 FROM payments p WHERE p.bid_id = bids.id AND p.status = 'paid'
+          )`,
+      [input.hourId],
+    );
+
+    const moderation = env.auction.autoApproveListings ? 'approved' : 'pending';
+    let bidId: string;
+    try {
+      const { rows } = await client.query<{ id: string }>(
+        `INSERT INTO bids (hour_id, user_id, amount_cents, display_name, tagline,
+                           link_url, logo_data_url, ip_hash, moderation, reserved_until)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id`,
+        [
+          input.hourId,
+          input.userId,
+          priceCents,
+          input.displayName,
+          input.tagline,
+          input.linkUrl,
+          input.logoDataUrl,
+          input.ipHash,
+          moderation,
+          reservedUntil,
+        ],
+      );
+      bidId = rows[0]!.id;
+    } catch (error) {
+      // 23505 is unique_violation: somebody else holds this hour.
+      if ((error as { code?: string }).code === '23505') {
+        throw conflict('That hour was just taken. Pick another.', 'hour_taken');
+      }
+      throw error;
+    }
+
+    const { rows: paymentRows } = await client.query<{ id: string }>(
+      `INSERT INTO payments (hour_id, bid_id, user_id, amount_cents, fee_cents, charity_cents, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id`,
+      [input.hourId, bidId, input.userId, priceCents, split.feeCents, split.charityCents, reservedUntil],
+    );
+
+    return { bidId, paymentId: paymentRows[0]!.id, hourId: input.hourId, priceCents };
+  });
+}
+
+/**
+ * Release a claim immediately, for when checkout could not be opened.
+ *
+ * Without this the hour would sit reserved until `releaseExpiredClaims` caught
+ * it, so a Polar outage would quietly take hours off sale for no reason.
+ */
+export async function releaseClaim(bidId: string): Promise<void> {
+  await tx(async (client) => {
+    await client.query(`UPDATE bids SET status = 'lost', reserved_until = NULL WHERE id = $1`, [bidId]);
+    await client.query(
+      `UPDATE payments SET status = 'failed' WHERE bid_id = $1 AND status = 'pending'`,
+      [bidId],
+    );
+  });
+}
+
+/**
+ * Put back any hour whose buyer never completed checkout.
+ *
+ * Runs from the same cron as everything else. Releasing is a status change
+ * rather than a delete so an abandoned claim stays auditable.
+ */
+export async function releaseExpiredClaims(): Promise<number[]> {
+  return tx(async (client) => {
+    const { rows } = await client.query<{ id: string; hour_id: number }>(
+      `UPDATE bids SET status = 'lost', reserved_until = NULL
+        WHERE status = 'active'
+          AND reserved_until IS NOT NULL
+          AND reserved_until < now()
+          AND NOT EXISTS (
+            SELECT 1 FROM payments p WHERE p.bid_id = bids.id AND p.status = 'paid'
+          )
+        RETURNING id, hour_id`,
+    );
+    if (rows.length > 0) {
+      await client.query(
+        `UPDATE payments SET status = 'expired'
+          WHERE bid_id = ANY($1::uuid[]) AND status = 'pending'`,
+        [rows.map((row) => row.id)],
+      );
+    }
+    return rows.map((row) => row.hour_id);
+  });
 }
