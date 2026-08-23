@@ -63,7 +63,14 @@ and in `npm run dev`. Vercel compiles the entry point but leaves those
 specifiers alone, so a deployed function tries to import `lib/http.ts` at
 runtime and dies with `ERR_MODULE_NOT_FOUND`. `npm run build` bundles each
 handler in `src-api/` into one self-contained file in `api/`, leaving no
-relative import for the platform to resolve. Edit `src-api/`, never `api/`.
+relative import for the platform to resolve.
+
+`api/` is committed even though it is generated. Vercel discovers functions
+from the uploaded repository rather than from build output, so an `api/` that
+only exists after the build command runs is never turned into functions at all
+-- the routes 404. **Run `npm run build` and commit `api/` whenever you change
+anything under `src-api/` or `lib/`,** or the deployment will keep serving the
+previous bundle. Edit `src-api/`, never `api/`.
 
 1. Set every variable from `.env.example` in the project's environment settings.
 2. `POLAR_WEBHOOK_SECRET` must match the endpoint you register with Polar,
