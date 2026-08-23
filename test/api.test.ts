@@ -47,11 +47,11 @@ if (!databaseUrl) {
 
   const { query } = await import('../lib/db.ts');
   const auctionModule = await import('../lib/auction.ts');
-  const stateHandler = (await import('../api/state.ts')).default;
-  const claimHandler = (await import('../api/claim.ts')).default;
-  const meHandler = (await import('../api/auth/me.ts')).default;
-  const requestLinkHandler = (await import('../api/auth/request-link.ts')).default;
-  const cronHandler = (await import('../api/cron/rollover.ts')).default;
+  const stateHandler = (await import('../src-api/state.ts')).default;
+  const claimHandler = (await import('../src-api/claim.ts')).default;
+  const meHandler = (await import('../src-api/auth/me.ts')).default;
+  const requestLinkHandler = (await import('../src-api/auth/request-link.ts')).default;
+  const cronHandler = (await import('../src-api/cron/rollover.ts')).default;
   const { createSession, csrfTokenFor, SESSION_COOKIE } = await import('../lib/session.ts');
 
   const ORIGIN = 'https://getyourhour.test';

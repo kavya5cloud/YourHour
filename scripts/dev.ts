@@ -44,15 +44,15 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
 }) as typeof fetch;
 
 const routes: Record<string, string> = {
-  '/api/state': '../api/state.ts',
-  '/api/claim': '../api/claim.ts',
-  '/api/moderation': '../api/moderation.ts',
-  '/api/auth/me': '../api/auth/me.ts',
-  '/api/auth/request-link': '../api/auth/request-link.ts',
-  '/api/auth/verify': '../api/auth/verify.ts',
-  '/api/auth/logout': '../api/auth/logout.ts',
-  '/api/cron/rollover': '../api/cron/rollover.ts',
-  '/api/webhooks/polar': '../api/webhooks/polar.ts',
+  '/api/state': '../src-api/state.ts',
+  '/api/claim': '../src-api/claim.ts',
+  '/api/moderation': '../src-api/moderation.ts',
+  '/api/auth/me': '../src-api/auth/me.ts',
+  '/api/auth/request-link': '../src-api/auth/request-link.ts',
+  '/api/auth/verify': '../src-api/auth/verify.ts',
+  '/api/auth/logout': '../src-api/auth/logout.ts',
+  '/api/cron/rollover': '../src-api/cron/rollover.ts',
+  '/api/webhooks/polar': '../src-api/webhooks/polar.ts',
 };
 
 const handlers = new Map<string, (req: never, res: never) => Promise<void>>();
