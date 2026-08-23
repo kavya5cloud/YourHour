@@ -351,7 +351,11 @@ async function settleDueHours(now = Date.now()) {
       WHERE starts_at <= now() AND winning_bid_id IS NULL AND status = 'open'
       ORDER BY id ASC LIMIT 24`
   );
-  for (const hour of [...due.map((row) => row.id), currentId]) {
+  const pending = due.map((row) => row.id);
+  const { rows: exists } = await query(`SELECT 1 FROM hours WHERE id = $1`, [currentId]);
+  if (exists.length === 0) pending.push(currentId);
+  if (pending.length === 0) return settled;
+  for (const hour of pending) {
     const assigned = await tx(async (client) => {
       await ensureHour(client, hour);
       const locked = await lockHour(client, hour);

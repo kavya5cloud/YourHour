@@ -57,8 +57,32 @@ if (!databaseUrl) {
     HOUR_MS,
   } = auction;
 
+  /**
+   * Wipe shared tables between tests.
+   *
+   * TRUNCATE needs an AccessExclusiveLock on every table at once, while other
+   * pooled connections may still hold row locks from the request that just
+   * finished. Postgres resolves that standoff by killing one side, which shows
+   * up as a deadlock in whichever test happened to be resetting. Retrying is
+   * the right response: the losing side is safe to repeat, and the contention
+   * is a property of sharing one database with a connection pool rather than a
+   * fault in the code under test.
+   */
+  async function truncateWithRetry(sql: string, attempts = 5): Promise<void> {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await query(sql);
+        return;
+      } catch (error) {
+        const code = (error as { code?: string }).code;
+        if (attempt >= attempts || (code !== '40P01' && code !== '55P03')) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 60 * attempt));
+      }
+    }
+  }
+
   async function reset(): Promise<void> {
-    await query(
+    await truncateWithRetry(
       `TRUNCATE payments, bids, hours, sessions, login_tokens, users,
                 webhook_events, rate_limits, audit_log RESTART IDENTITY CASCADE`,
     );
@@ -108,7 +132,8 @@ if (!databaseUrl) {
   async function buy(email: string, dollars: number): Promise<string> {
     const userId = await makeUser(email);
     const result = await purchase({ amountCents: dollars * 100, userId, ...listing });
-    await markPaid(result.paymentId, `order_${email}`);
+    const paid = await markPaid(result.paymentId, `order_${email}`);
+    assert.equal(paid, true, `payment for ${email} should have been confirmed`);
     return result.bidId;
   }
 

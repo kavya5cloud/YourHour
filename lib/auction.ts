@@ -462,14 +462,24 @@ export async function settleDueHours(now: number = Date.now()): Promise<number[]
   const currentId = hourIdAt(now);
   const settled: number[] = [];
 
-  // Only look back a bounded distance, so a long-idle deployment does not try
-  // to settle thousands of hours in one request.
+  // Cheap read first. This runs on every page poll, so the overwhelming case --
+  // the current hour already has an owner and nothing is due -- must cost one
+  // indexed SELECT and open no transaction at all. Taking a row lock on every
+  // read would put every visitor in a queue behind the same hour row.
   const { rows: due } = await query<{ id: number }>(
     `SELECT id FROM hours
       WHERE starts_at <= now() AND winning_bid_id IS NULL AND status = 'open'
       ORDER BY id ASC LIMIT 24`,
   );
-  for (const hour of [...due.map((row) => row.id), currentId]) {
+  const pending = due.map((row) => row.id);
+
+  // The current hour may have no row yet on a cold database.
+  const { rows: exists } = await query(`SELECT 1 FROM hours WHERE id = $1`, [currentId]);
+  if (exists.length === 0) pending.push(currentId);
+
+  if (pending.length === 0) return settled;
+
+  for (const hour of pending) {
     const assigned = await tx(async (client) => {
       await ensureHour(client, hour);
       const locked = await lockHour(client, hour);

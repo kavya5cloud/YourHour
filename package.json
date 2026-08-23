@@ -8,7 +8,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test --test-concurrency=1 \"test/**/*.test.ts\"",
+    "test": "node --test test/validate.test.ts test/auction.test.ts test/webhook.test.ts && node --test test/integration.test.ts && node --test test/api.test.ts",
     "migrate": "node --experimental-strip-types scripts/migrate.ts",
     "check": "npm run typecheck && npm test",
     "dev": "node --env-file=.env.local --experimental-strip-types scripts/dev.ts",
