@@ -48,7 +48,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   // the status code and Polar's own message -- no credential is echoed back.
   let polar: Record<string, unknown> | null = null;
   if (new URL(req.url ?? '/', 'http://x').searchParams.get('polar') === '1') {
-    const base = process.env.POLAR_API_BASE || 'https://api.polar.sh';
+    const base = 'https://api.polar.sh';
     try {
       const response = await fetch(`${base}/v1/products/${process.env.POLAR_PRODUCT_ID}`, {
         headers: { Authorization: `Bearer ${process.env.POLAR_ACCESS_TOKEN}` },

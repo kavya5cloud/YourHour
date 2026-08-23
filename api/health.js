@@ -25,7 +25,7 @@ async function handler(req, res) {
   };
   let polar = null;
   if (new URL(req.url ?? "/", "http://x").searchParams.get("polar") === "1") {
-    const base = process.env.POLAR_API_BASE || "https://api.polar.sh";
+    const base = "https://api.polar.sh";
     try {
       const response = await fetch(`${base}/v1/products/${process.env.POLAR_PRODUCT_ID}`, {
         headers: { Authorization: `Bearer ${process.env.POLAR_ACCESS_TOKEN}` },

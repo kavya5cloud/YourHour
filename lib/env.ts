@@ -55,7 +55,17 @@ export const env = {
     accessToken: required('POLAR_ACCESS_TOKEN'),
     webhookSecret: required('POLAR_WEBHOOK_SECRET'),
     productId: required('POLAR_PRODUCT_ID'),
-    apiBase: optional('POLAR_API_BASE') ?? 'https://api.polar.sh',
+    /**
+     * Always production Polar.
+     *
+     * This was configurable, and the sandbox base broke the live site twice --
+     * a sandbox URL with a production token returns 401 on every checkout,
+     * which surfaces as an opaque 500 and takes the buying path down while
+     * everything that does not touch Polar keeps working. Nothing in a
+     * deployment needs sandbox, so the setting is gone rather than left as a
+     * footgun that only misfires in production.
+     */
+    apiBase: 'https://api.polar.sh',
   },
 
   email: {
