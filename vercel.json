@@ -1,17 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-
-  "crons": [
-    {
-      "comment": "Closes hours, opens and expires payment windows. Idempotent, so a missed or repeated run is harmless. Vercel signs this request with CRON_SECRET.",
-      "path": "/api/cron/rollover",
-      "schedule": "* * * * *"
-    }
-  ],
-
   "headers": [
     {
-      "comment": "Applies to every response. The CSP is the important line: default-src 'none' means anything not explicitly allowed below is blocked, and the absence of 'unsafe-inline' in script-src is what makes it a real barrier rather than decoration. The page has no inline script or style, so nothing has to be relaxed for it.",
       "source": "/(.*)",
       "headers": [
         {
@@ -34,7 +24,6 @@
       ]
     },
     {
-      "comment": "Fingerprint-free asset names are not in use, so the immutable cache is deliberately not set here; a short revalidating cache keeps deploys honest.",
       "source": "/app.(js|css)",
       "headers": [{ "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }]
     }

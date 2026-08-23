@@ -199,7 +199,17 @@ async function loadAccount() {
     $('signout').hidden = !state.signedIn;
     setText($('account-line'), state.signedIn ? `Signed in as ${me.email}` : 'Sign in to place a bid.');
   } catch {
+    // The account check failed (offline, API down, deploy in progress). Both
+    // forms start hidden, so failing silently here would leave the page with
+    // nothing to act on at all. Fall back to the signed-out view: the sign-in
+    // form is the safe default, and a bid attempt would be rejected server-side
+    // anyway if the session turns out to be missing.
     state.signedIn = false;
+    state.csrfToken = null;
+    $('bid-form').hidden = true;
+    $('signin-form').hidden = false;
+    $('signout').hidden = true;
+    setText($('account-line'), 'Sign in to place a bid.');
   }
 }
 
