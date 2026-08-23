@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { loadEnv } from './setup.ts';
+import { loadEnv, TEST_WEBHOOK_SECRET } from './setup.ts';
 
 loadEnv();
 const { verifyWebhook } = await import('../lib/polar.ts');
 
-const SECRET = 'whsec_dGVzdC13ZWJob29rLXNlY3JldC12YWx1ZQ==';
+const SECRET = TEST_WEBHOOK_SECRET;
 const rawKey = Buffer.from(SECRET.slice('whsec_'.length), 'base64');
 
 /** Build a correctly signed delivery, the way the provider would. */
