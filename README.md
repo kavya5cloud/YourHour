@@ -121,9 +121,13 @@ Three layers:
   claiming without a session, the required link, a taken hour returning 409,
   CSRF enforcement, account-enumeration resistance, and the cron secret check.
 
-The DB-backed suites truncate shared tables, so the test script pins
-`--test-concurrency=1`. Do not remove that without giving each suite its own
-database.
+The DB-backed suites truncate shared tables **and** `/api/state` now writes --
+it assigns an hour its occupant on read -- so the two of them cannot run at
+the same time: whichever polls state will consume the queue the other is
+asserting on. `--test-concurrency=1` did not reliably serialise separate
+files, so the test script runs them as three sequential `node --test`
+invocations instead. Do not collapse them back into one without giving each
+suite its own database.
 
 ### What the tests pin down
 
