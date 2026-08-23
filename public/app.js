@@ -152,7 +152,7 @@ function renderQueue(data) {
   if (data.queue.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'queue-empty';
-    empty.textContent = 'Nobody is waiting. Pay anything and you are next up.';
+    empty.textContent = 'Nobody waiting — pay anything to go next.';
     list.append(empty);
   } else {
     for (const entry of data.queue) {
@@ -174,7 +174,7 @@ function renderQueue(data) {
   setText(
     $('front-hint'),
     data.queue.length === 0
-      ? 'anything gets you next'
+      ? 'any amount goes next'
       : `${money(data.frontOfQueueCents)} to go first`,
   );
 }

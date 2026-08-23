@@ -53,7 +53,7 @@
           <div class="tear" aria-hidden="true"><i></i><i></i></div>
 
           <section class="auction-card" aria-labelledby="auction-title">
-            <div class="eyebrow"><span id="auction-title">Pay what it&rsquo;s worth</span><b id="queue-note">Highest pays, goes next</b></div>
+            <div class="eyebrow"><span id="auction-title">Pay what it&rsquo;s worth</span><b id="queue-note">Highest goes next</b></div>
 
             <!-- The running order. A projection, not a schedule: it reshuffles
                  whenever someone pays more, right up until an hour starts and
@@ -61,27 +61,27 @@
             <div class="queue" id="queue" aria-live="polite"></div>
 
             <form id="claim-form">
-              <div class="field"><label for="name">Your product</label><input id="name" name="name" maxlength="24" placeholder="yoursite.com" autocomplete="off" required /></div>
+              <div class="field"><label for="name">Product</label><input id="name" name="name" maxlength="24" placeholder="yoursite.com" autocomplete="off" required /></div>
               <div class="field"><label for="link">Link</label><input id="link" name="link" maxlength="200" placeholder="https://yoursite.com" autocomplete="off" inputmode="url" required /></div>
-              <div class="field"><label for="message">One line <span class="count" id="count">0 / 90</span></label><input id="message" name="message" maxlength="90" placeholder="Say the thing." autocomplete="off" /></div>
+              <div class="field"><label for="message">Tagline <span class="count" id="count">0 / 90</span></label><input id="message" name="message" maxlength="90" placeholder="Say the thing." autocomplete="off" /></div>
               <div class="field">
-                <label for="logo">Logo <span class="count">auto</span></label>
+                <label for="logo">Logo <span class="count">optional</span></label>
                 <div class="logo-field">
                   <img class="logo-preview" id="logo-preview" alt="" hidden />
                   <span class="logo-placeholder" id="logo-placeholder" aria-hidden="true">✦</span>
                   <input id="logo" name="logo" type="file" accept="image/png,image/jpeg,image/webp" />
                   <button class="logo-clear" id="logo-clear" type="button" hidden>Remove</button>
                 </div>
-                <p class="logo-note" id="logo-note">Leave this empty and we'll use your site's own icon. Or upload a PNG, JPEG, or WebP to override it.</p>
+                <p class="logo-note" id="logo-note">We&rsquo;ll use your site&rsquo;s icon if you skip this.</p>
               </div>
-              <div class="field"><label for="email">Email <span class="count">for your receipt</span></label><input id="email" name="email" type="email" maxlength="254" placeholder="you@example.com" autocomplete="email" required /></div>
+              <div class="field"><label for="email">Email</label><input id="email" name="email" type="email" maxlength="254" placeholder="you@example.com" autocomplete="email" required /></div>
               <div class="bid-row">
-                <div class="field"><label for="amount">Your amount <span class="count" id="front-hint"></span></label><input id="amount" name="amount" inputmode="numeric" autocomplete="off" placeholder="50" required /></div>
-                <button class="claim" id="claim-submit" type="submit">Pay &amp; join the queue</button>
+                <div class="field"><label for="amount">Amount <span class="count" id="front-hint"></span></label><input id="amount" name="amount" inputmode="numeric" autocomplete="off" placeholder="50" required /></div>
+                <button class="claim" id="claim-submit" type="submit">Pay &amp; get in line</button>
               </div>
               <p class="message" id="form-message" role="alert"></p>
-              <p class="rules" id="claim-help"><strong>Everyone who pays gets an hour.</strong> Paying more moves you sooner, it never decides whether you get on. Your slot can drift later if someone pays more, and it locks the moment your hour starts.</p>
-              <p class="charity-note">♡ <strong>50% of net proceeds is donated to charity.</strong></p>
+              <p class="rules" id="claim-help"><strong>Everyone who pays gets an hour.</strong> Pay more, go sooner. Your slot can drift later, and locks when your hour starts.</p>
+              <p class="charity-note">♡ <strong>50% of net proceeds goes to charity.</strong></p>
             </form>
           </section>
 
