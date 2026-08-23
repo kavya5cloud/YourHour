@@ -55,9 +55,23 @@ cron schedule.
 1. Set every variable from `.env.example` in the project's environment settings.
 2. `POLAR_WEBHOOK_SECRET` must match the endpoint you register with Polar,
    pointed at `https://<your-domain>/api/webhooks/polar`.
-3. The rollover cron runs **every minute**. Vercel's Hobby plan only permits
-   daily cron, so this needs Pro — or point any external scheduler at
-   `/api/cron/rollover` with `Authorization: Bearer $CRON_SECRET`.
+3. Rollover is driven by [.github/workflows/rollover.yml](.github/workflows/rollover.yml),
+   which calls `/api/cron/rollover` every five minutes. Set `SITE_ORIGIN` and
+   `CRON_SECRET` as **repository secrets** for it to work.
+
+   It is not in `vercel.json`, deliberately: Hobby plans cap cron at once per
+   day and reject a more frequent schedule, which fails the whole deployment.
+   On Pro, prefer Vercel Cron — it is punctual, where GitHub's scheduler has a
+   five-minute floor and is often ten or more minutes late. Add this to
+   `vercel.json` and delete the workflow:
+
+   ```json
+   "crons": [{ "path": "/api/cron/rollover", "schedule": "* * * * *" }]
+   ```
+
+   Vercel then sends `Authorization: Bearer $CRON_SECRET` automatically.
+   Note that `vercel.json` is strict JSON with no unknown keys permitted —
+   a stray `"comment"` field will fail the build.
 4. Run `npm run migrate` against the production database once.
 
 Hosting elsewhere: the handlers are plain Node request/response functions, but
