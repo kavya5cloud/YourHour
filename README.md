@@ -60,18 +60,18 @@ functions, and [vercel.json](vercel.json) carries the security headers.
 1. Set every variable from `.env.example` in the project's environment settings.
 2. `POLAR_WEBHOOK_SECRET` must match the endpoint you register with Polar,
    pointed at `https://<your-domain>/api/webhooks/polar`.
-3. Rollover is **optional**. Abandoned reservations free themselves: the board
-   ignores an expired hold, and `claimHour` clears an hour's own stale hold
-   under the row lock before inserting. So an hour returns to sale the moment
-   its hold lapses, whether or not any scheduler runs.
+3. Rollover is **optional**, and there is no scheduler configured.
+
+   Abandoned reservations free themselves: the board ignores an expired hold,
+   and `claimHour` clears an hour's own stale hold under the row lock before
+   inserting. An hour returns to sale the moment its hold lapses, whether or
+   not anything is scheduled.
 
    `/api/cron/rollover` only labels past unbought hours "unsold", which is
-   cosmetic. Wire it up if you want that tidy: either the workflow in
-   [.github/workflows/rollover.yml](.github/workflows/rollover.yml) with
-   `SITE_ORIGIN` and `CRON_SECRET` as **repository secrets**, or on Vercel Pro
-   a `crons` entry in `vercel.json`. Hobby plans cap cron at once per day and
-   reject anything more frequent, which fails the whole deployment -- which is
-   why it is not in `vercel.json` by default.
+   cosmetic. If you want that tidy, call it on a schedule with
+   `Authorization: Bearer $CRON_SECRET` -- on Vercel Pro via a `crons` entry in
+   `vercel.json`. Hobby plans cap cron at once per day and reject anything more
+   frequent, which fails the whole deployment, so nothing is wired up here.
 
 4. Run `npm run migrate` against the production database once.
 
