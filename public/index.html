@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#faf6e8" />
+    <title>The Hour — one page, one owner</title>
+    <meta name="description" content="One page, one owner, one hour. Bid for the next hour; half of net proceeds goes to charity." />
+    <!-- No inline script or style anywhere on this page: the Content-Security-
+         Policy served with it forbids both, which is what makes the policy a
+         real defence rather than a formality. -->
+    <link rel="stylesheet" href="/app.css" />
+    <script src="/app.js" type="module" defer></script>
+  </head>
+  <body>
+    <main class="shell">
+      <div class="content">
+        <header class="masthead">
+          <div class="wordmark">The Hour</div>
+          <div class="status"><i class="live-dot"></i><span id="watchers">Live</span></div>
+        </header>
+
+        <div class="pad">
+          <section aria-label="The current owner">
+            <div class="eyebrow"><span>Now showing</span><b id="current-label">Hour —</b></div>
+            <article class="owner-card">
+              <div class="owner-kicker">The current hour</div>
+              <div class="owner-orb" aria-hidden="true"><span id="owner-logo">✦</span></div>
+              <div class="owner-name" id="owner-name">Open hour</div>
+              <p class="owner-line" id="owner-line">Nobody owns this hour yet.</p>
+              <div class="owner-meta"><span id="owner-paid"></span><span id="expiry"></span></div>
+            </article>
+            <div class="clock-zone">
+              <div class="clock" id="clock" aria-live="polite">--:--</div>
+              <div class="clock-caption">until this hour tears away</div>
+              <div class="time-bar" aria-hidden="true"><b id="time-bar"></b></div>
+            </div>
+          </section>
+
+          <div class="tear" aria-hidden="true"><i></i><i></i></div>
+
+          <section class="auction-card" aria-labelledby="auction-title">
+            <div class="eyebrow"><span id="auction-title">Next up — make it yours</span><b id="next-label">Hour —</b></div>
+            <div class="leader" aria-live="polite">
+              <div><span class="leader-label">Current high bid</span><strong class="leader-name" id="leader-name">No bids yet</strong></div>
+              <div class="leader-bid" id="leader-bid">—</div>
+            </div>
+
+            <!-- Signed out: request a sign-in link. -->
+            <form id="signin-form" hidden>
+              <div class="field">
+                <label for="signin-email">Email to bid</label>
+                <input id="signin-email" name="email" type="email" maxlength="254" autocomplete="email" placeholder="you@company.com" required />
+              </div>
+              <button class="claim" type="submit">Email me a sign-in link</button>
+              <p class="message" id="signin-message" role="status"></p>
+              <p class="rules">We use a one-time link instead of a password. It expires in 15 minutes.</p>
+            </form>
+
+            <!-- Signed in: place a bid. -->
+            <form id="bid-form" hidden>
+              <div class="field"><label for="name">Your name or link</label><input id="name" name="name" maxlength="24" placeholder="yoursite.com" autocomplete="off" required /></div>
+              <div class="field"><label for="message">One line <span class="count" id="count">0 / 90</span></label><input id="message" name="message" maxlength="90" placeholder="Say the thing." autocomplete="off" /></div>
+              <div class="field"><label for="link">Link (optional)</label><input id="link" name="link" maxlength="200" placeholder="https://yoursite.com" autocomplete="off" inputmode="url" /></div>
+              <div class="bid-row">
+                <div class="field"><label for="amount">Your bid</label><input id="amount" name="amount" inputmode="numeric" autocomplete="off" aria-describedby="bid-help" required /></div>
+                <button class="claim" id="bid-submit" type="submit">Place bid ✦</button>
+              </div>
+              <p class="message" id="form-message" role="alert"></p>
+              <p class="rules" id="bid-help"><strong>No payment is taken now.</strong> If you lead at rollover, we email a Polar checkout link. You have five minutes to pay.</p>
+              <p class="charity-note">♡ <strong>50% of net proceeds from paid winning hours is donated to charity.</strong></p>
+              <section class="bid-slip" id="bid-slip" aria-live="polite" aria-label="Your bid receipt">
+                <div class="slip-head"><span>Your bid receipt</span><span id="slip-number">#—</span></div>
+                <div class="slip-row"><span>Listing</span><b id="slip-name">—</b></div>
+                <div class="slip-row"><span>Bid</span><b id="slip-bid">—</b></div>
+                <div class="slip-row"><span>Hour</span><b id="slip-hour">—</b></div>
+                <div class="slip-foot">If you lead at rollover, we email your Polar checkout link.</div>
+              </section>
+            </form>
+          </section>
+
+          <section aria-labelledby="archive-title">
+            <div class="eyebrow"><span id="archive-title">Hall of fame</span><b id="archive-count">—</b></div>
+            <div class="archive" id="archive"></div>
+            <div class="receipt"><div>Total raised<strong id="total-raised">—</strong></div><div>Highest hour<strong id="highest-hour">—</strong></div></div>
+          </section>
+        </div>
+
+        <aside class="prototype">
+          <span id="account-line">Not signed in.</span>
+          <button class="demo-button" id="signout" type="button" hidden>Sign out</button>
+        </aside>
+      </div>
+    </main>
+
+    <dialog id="confirmation" aria-labelledby="dialog-title">
+      <div class="dialog-inner thank-you-card">
+        <div class="celebrate-mark" aria-hidden="true">🎉</div>
+        <h2 id="dialog-title">Bid saved!</h2>
+        <p>No payment was taken. If you lead at rollover, we email your Polar checkout link.</p>
+        <div class="receipt-cut"></div>
+        <div class="ticket-details">
+          <div><span>Hour</span><b id="ticket-hour">—</b></div>
+          <div><span>Your bid</span><b id="ticket-bid">—</b></div>
+          <div><span>Date &amp; time</span><b id="ticket-time">—</b></div>
+          <div><span>Listing</span><b id="ticket-name">—</b></div>
+        </div>
+        <div class="ticket-charity"><span>♡</span><div><strong>50% of net paid proceeds goes to charity</strong><small>Applies to paid winning hours.</small></div></div>
+        <div class="dialog-actions"><button id="confirm-bid" type="button">Got it</button></div>
+      </div>
+    </dialog>
+  </body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "name": "the-hour",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --test-concurrency=1 \"test/**/*.test.ts\"",
+    "migrate": "node --experimental-strip-types scripts/migrate.ts",
+    "check": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.7.2"
+  }
+}
