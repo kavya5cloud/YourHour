@@ -24,7 +24,7 @@ The browser only displays the result.
 ## Layout
 
 ```
-api/
+src-api/                handler sources; `npm run build` bundles these into api/
   state.ts              public state: current owner, and the board of hours
   claim.ts              buy one hour, and open its Polar checkout
   moderation.ts         review listing text before it is displayed
@@ -45,7 +45,7 @@ npm install
 cp .env.example .env.local     # then fill in every value
 npm run migrate                # applies db/schema.sql (idempotent)
 npm run check                  # typecheck + tests
-npx vercel dev
+npm run dev                    # local server on :3000
 ```
 
 Generate the two secrets with `openssl rand -base64 48`. The app refuses to
@@ -56,6 +56,14 @@ start if either is missing or under 32 characters — see
 
 Built for Vercel: `public/` is served statically, `api/` becomes serverless
 functions, and [vercel.json](vercel.json) carries the security headers.
+
+`api/` is **generated**. Every module imports with an explicit `.ts` extension,
+which is what Node's type stripping needs to run the sources directly in tests
+and in `npm run dev`. Vercel compiles the entry point but leaves those
+specifiers alone, so a deployed function tries to import `lib/http.ts` at
+runtime and dies with `ERR_MODULE_NOT_FOUND`. `npm run build` bundles each
+handler in `src-api/` into one self-contained file in `api/`, leaving no
+relative import for the platform to resolve. Edit `src-api/`, never `api/`.
 
 1. Set every variable from `.env.example` in the project's environment settings.
 2. `POLAR_WEBHOOK_SECRET` must match the endpoint you register with Polar,

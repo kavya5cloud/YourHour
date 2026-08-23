@@ -11,7 +11,8 @@
     "test": "node --test --test-concurrency=1 \"test/**/*.test.ts\"",
     "migrate": "node --experimental-strip-types scripts/migrate.ts",
     "check": "npm run typecheck && npm test",
-    "dev": "node --env-file=.env.local --experimental-strip-types scripts/dev.ts"
+    "dev": "node --env-file=.env.local --experimental-strip-types scripts/dev.ts",
+    "build": "node --experimental-strip-types scripts/build.ts"
   },
   "dependencies": {
     "pg": "^8.13.1"
@@ -19,6 +20,7 @@
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/pg": "^8.11.10",
+    "esbuild": "^0.28.2",
     "typescript": "^5.7.2"
   }
 }
