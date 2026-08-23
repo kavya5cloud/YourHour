@@ -542,6 +542,13 @@ export async function markPaid(paymentId: string, providerOrderId: string | null
     );
     await client.query(`UPDATE bids SET status = 'won' WHERE id = $1`, [payment.bid_id]);
 
+    // Paying through a link sent to that address proves control of it just as
+    // well as clicking a sign-in link does, so it lifts the unverified cap too.
+    await client.query(
+      `UPDATE users SET email_verified_at = COALESCE(email_verified_at, now()) WHERE id = $1`,
+      [payment.user_id],
+    );
+
     await audit({
       action: 'payment.paid',
       actorId: payment.user_id,

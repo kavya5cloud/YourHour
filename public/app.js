@@ -188,28 +188,33 @@ async function refresh() {
   }
 }
 
+/**
+ * Find out whether this visitor already has a session.
+ *
+ * This only decides whether to show the email field -- it never gates the form.
+ * A returning bidder does not retype their address; a first-time one just fills
+ * it in. If the check fails for any reason, we show the email field, which is
+ * the version that works for everyone.
+ */
+/**
+ * Find out whether we already know how to reach this visitor.
+ *
+ * This only decides whether the email step appears after they press Place bid.
+ * It never gates the form. If the check fails, we assume we do not know them,
+ * which is the version that works for everyone.
+ */
 async function loadAccount() {
   try {
     const me = await api('/api/auth/me');
     state.signedIn = Boolean(me.signedIn);
     state.csrfToken = me.csrfToken ?? null;
-
-    $('bid-form').hidden = !state.signedIn;
-    $('signin-form').hidden = state.signedIn;
     $('signout').hidden = !state.signedIn;
-    setText($('account-line'), state.signedIn ? `Signed in as ${me.email}` : 'Sign in to place a bid.');
+    setText($('account-line'), state.signedIn ? `Bidding as ${me.email}` : 'One page, one owner, one hour.');
   } catch {
-    // The account check failed (offline, API down, deploy in progress). Both
-    // forms start hidden, so failing silently here would leave the page with
-    // nothing to act on at all. Fall back to the signed-out view: the sign-in
-    // form is the safe default, and a bid attempt would be rejected server-side
-    // anyway if the session turns out to be missing.
     state.signedIn = false;
     state.csrfToken = null;
-    $('bid-form').hidden = true;
-    $('signin-form').hidden = false;
     $('signout').hidden = true;
-    setText($('account-line'), 'Sign in to place a bid.');
+    setText($('account-line'), 'One page, one owner, one hour.');
   }
 }
 
@@ -219,34 +224,45 @@ $('message')?.addEventListener('input', (event) => {
   setText($('count'), `${event.target.value.length} / 90`);
 });
 
-$('signin-form')?.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const button = event.currentTarget.querySelector('button');
-  const message = $('signin-message');
+/**
+ * Send the bid.
+ *
+ * `email` is ignored by the server whenever a session is present, so passing an
+ * empty string for a signed-in bidder is harmless.
+ */
+async function submitBid(email, messageEl, button) {
   button.disabled = true;
   try {
-    const result = await api('/api/auth/request-link', {
+    const result = await api('/api/bids', {
       method: 'POST',
-      body: { email: $('signin-email').value },
+      body: {
+        amount: Number.parseInt($('amount').value, 10),
+        name: $('name').value.trim(),
+        message: $('message').value,
+        link: $('link').value,
+        email,
+      },
     });
-    setText(message, result.message);
+    return { ok: true, result };
   } catch (error) {
-    setText(message, error.message);
+    // Covers the over-the-cap case too: the server has already sent a
+    // verification link and its message says so.
+    setText(messageEl, error.message);
+    return { ok: false };
   } finally {
     button.disabled = false;
   }
-});
+}
 
 $('bid-form')?.addEventListener('submit', async (event) => {
   event.preventDefault();
   const message = $('form-message');
-  const button = $('bid-submit');
   setText(message, '');
 
   // Client-side checks for responsiveness only. The server repeats all of them.
   const name = $('name').value.trim();
   if (!name) {
-    setText(message, 'Add a name or link first.');
+    setText(message, 'Add your product first.');
     $('name').focus();
     return;
   }
@@ -257,32 +273,48 @@ $('bid-form')?.addEventListener('submit', async (event) => {
     return;
   }
 
-  button.disabled = true;
-  try {
-    const result = await api('/api/bids', {
-      method: 'POST',
-      body: {
-        amount: dollars,
-        name,
-        message: $('message').value,
-        link: $('link').value,
-      },
-    });
-
-    setText(message, result.message);
-    showReceipt(result);
-    await refresh();
-  } catch (error) {
-    if (error.status === 401) {
-      // The session expired while the page was open.
-      setText(message, 'Your session expired. Sign in again to bid.');
-      await loadAccount();
-    } else {
-      setText(message, error.message);
+  // A bidder we can already reach goes straight through.
+  if (state.signedIn) {
+    const outcome = await submitBid('', message, $('bid-submit'));
+    if (outcome.ok) {
+      setText(message, outcome.result.message);
+      showReceipt(outcome.result);
+      await refresh();
     }
-  } finally {
-    button.disabled = false;
+    return;
   }
+
+  // Otherwise ask where to send the checkout link, showing what they are
+  // committing to so the request has visible purpose.
+  setText($('email-step-amount'), money(dollars * 100));
+  setText($('email-step-product'), name);
+  setText($('email-step-message'), '');
+  $('email-step').showModal();
+  $('email').focus();
+});
+
+$('email-step-form')?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const stepMessage = $('email-step-message');
+  const email = $('email').value.trim();
+  if (!email.includes('@')) {
+    setText(stepMessage, 'Enter a valid email address.');
+    $('email').focus();
+    return;
+  }
+
+  const outcome = await submitBid(email, stepMessage, $('email-step-confirm'));
+  if (!outcome.ok) return;
+
+  $('email-step').close();
+  setText($('form-message'), outcome.result.message);
+  showReceipt(outcome.result);
+  await refresh();
+});
+
+$('email-step-cancel')?.addEventListener('click', () => $('email-step').close());
+$('email-step')?.addEventListener('click', (event) => {
+  if (event.target === event.currentTarget) event.currentTarget.close();
 });
 
 function showReceipt(result) {
@@ -298,6 +330,8 @@ function showReceipt(result) {
   setText($('ticket-time'), new Date(serverNow()).toLocaleString());
   $('confirmation').showModal();
 
+  // The email lives in its own dialog, so resetting the bid form leaves it
+  // intact -- a bidder who gets outbid and bids again does not retype it.
   $('bid-form').reset();
   setText($('count'), '0 / 90');
 }
@@ -323,12 +357,12 @@ function reportSignInResult() {
   if (!outcome) return;
 
   const messages = {
-    ok: 'Signed in. You can bid now.',
-    expired: 'That sign-in link has expired or was already used. Request a new one.',
-    invalid: 'That sign-in link was not valid.',
-    throttled: 'Too many sign-in attempts. Try again in a little while.',
+    ok: 'Email confirmed. Your bid limit is lifted.',
+    expired: 'That link has expired or was already used. Bid again to get a new one.',
+    invalid: 'That link was not valid.',
+    throttled: 'Too many attempts. Try again in a little while.',
   };
-  setText($('signin-message'), messages[outcome] ?? '');
+  setText($('form-message'), messages[outcome] ?? '');
   // Strip the parameter so a refresh does not repeat the message.
   window.history.replaceState({}, '', window.location.pathname);
 }

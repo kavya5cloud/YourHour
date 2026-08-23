@@ -46,20 +46,11 @@
               <div class="leader-bid" id="leader-bid">—</div>
             </div>
 
-            <!-- Signed out: request a sign-in link. -->
-            <form id="signin-form" hidden>
-              <div class="field">
-                <label for="signin-email">Email to bid</label>
-                <input id="signin-email" name="email" type="email" maxlength="254" autocomplete="email" placeholder="you@company.com" required />
-              </div>
-              <button class="claim" type="submit">Email me a sign-in link</button>
-              <p class="message" id="signin-message" role="status"></p>
-              <p class="rules">We use a one-time link instead of a password. It expires in 15 minutes.</p>
-            </form>
-
-            <!-- Signed in: place a bid. -->
-            <form id="bid-form" hidden>
-              <div class="field"><label for="name">Your name or link</label><input id="name" name="name" maxlength="24" placeholder="yoursite.com" autocomplete="off" required /></div>
+            <!-- One form. Bidding does not require signing in first: the email
+                 field creates the account, and the emailed checkout link is
+                 what proves the address when there is money at stake. -->
+            <form id="bid-form">
+              <div class="field"><label for="name">Your product</label><input id="name" name="name" maxlength="24" placeholder="yoursite.com" autocomplete="off" required /></div>
               <div class="field"><label for="message">One line <span class="count" id="count">0 / 90</span></label><input id="message" name="message" maxlength="90" placeholder="Say the thing." autocomplete="off" /></div>
               <div class="field"><label for="link">Link (optional)</label><input id="link" name="link" maxlength="200" placeholder="https://yoursite.com" autocomplete="off" inputmode="url" /></div>
               <div class="bid-row">
@@ -92,6 +83,26 @@
         </aside>
       </div>
     </main>
+
+    <!-- Step two. Only shown to a bidder we cannot already reach: the address is
+         asked for at the moment it has an obvious purpose, rather than sitting
+         in front of the bid form as a toll. -->
+    <dialog id="email-step" aria-labelledby="email-step-title">
+      <form class="dialog-inner thank-you-card" id="email-step-form" method="dialog">
+        <h2 id="email-step-title">Where do we send your checkout link?</h2>
+        <p>You are bidding <b id="email-step-amount">—</b> for <b id="email-step-product">—</b>.</p>
+        <div class="field">
+          <label for="email">Your email</label>
+          <input id="email" name="email" type="email" maxlength="254" placeholder="you@company.com" autocomplete="email" required />
+        </div>
+        <p class="message" id="email-step-message" role="alert"></p>
+        <p class="rules">Only used to send your checkout link if you win, and a note if you get outbid. <strong>No payment is taken now.</strong></p>
+        <div class="dialog-actions">
+          <button type="button" class="close" id="email-step-cancel">Back</button>
+          <button type="submit" id="email-step-confirm">Place bid ✦</button>
+        </div>
+      </form>
+    </dialog>
 
     <dialog id="confirmation" aria-labelledby="dialog-title">
       <div class="dialog-inner thank-you-card">

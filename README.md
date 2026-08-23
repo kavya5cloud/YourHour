@@ -6,7 +6,9 @@ hours goes to charity.
 
 ## How it works
 
-1. Bids are placed on the **next** hour. No payment method is taken at bid time.
+1. Bids are placed on the **next** hour. No payment method is taken at bid time,
+   and no sign-in is required — the bid form is the whole signup. Bidders who
+   have not confirmed their email are capped at `MAX_UNVERIFIED_BID_CENTS`.
 2. When the hour rolls over, the highest bidder is emailed a Polar checkout link.
 3. They have five minutes to pay. If they do not, the hour passes to the next
    bidder, and so on until someone pays or the hour runs out.
@@ -49,8 +51,7 @@ start if either is missing or under 32 characters — see
 ## Deploying
 
 Built for Vercel: `public/` is served statically, `api/` becomes serverless
-functions, and [vercel.json](vercel.json) carries the security headers and the
-cron schedule.
+functions, and [vercel.json](vercel.json) carries the security headers.
 
 1. Set every variable from `.env.example` in the project's environment settings.
 2. `POLAR_WEBHOOK_SECRET` must match the endpoint you register with Polar,
@@ -75,7 +76,7 @@ cron schedule.
 4. Run `npm run migrate` against the production database once.
 
 Hosting elsewhere: the handlers are plain Node request/response functions, but
-the header and cron configuration in `vercel.json` would need translating to
+the header configuration in `vercel.json` would need translating to
 that platform (a `_headers` file on Netlify, a server block on nginx/Caddy).
 
 ## Security
@@ -88,7 +89,7 @@ before changing anything in `lib/auction.ts` or the webhook route.
 
 ```bash
 npm test                                    # 27 unit tests, no database needed
-TEST_DATABASE_URL=postgres://... npm test   # all 50, including integration
+TEST_DATABASE_URL=postgres://... npm test   # all 53, including integration
 ```
 
 Three layers:
@@ -101,8 +102,8 @@ Three layers:
   idempotency, payment-window expiry and promotion, and duplicate payment
   confirmation, against real Postgres.
 - **API** — handlers mounted on a real `http.Server`: security headers, 405s,
-  401/403 on the auth and CSRF gates, account-enumeration resistance, and the
-  cron secret check.
+  the unverified bid cap, CSRF enforcement on session-bearing requests,
+  account-enumeration resistance, and the cron secret check.
 
 The DB-backed suites truncate shared tables, so the test script pins
 `--test-concurrency=1`. Do not remove that without giving each suite its own

@@ -91,8 +91,35 @@ Listings additionally default to `moderation = 'pending'` and render as
 
 ## Authentication
 
-Passwordless, because the safest password database is the one that does not
-exist.
+**Bidding does not require signing in.** This is deliberate. An hour rolls over
+in minutes, so a "check your inbox, click a link, come back" gate can outlast
+the thing being bid on. The bid form is the whole signup: an email address in
+the request creates or matches an account and the bid lands immediately.
+
+Verification is enforced where it actually protects money — the winner must
+open the emailed checkout link to pay. Owning the inbox is proved there rather
+than at the door.
+
+What bounds the abuse this opens up:
+
+- **Unverified accounts are capped** at `MAX_UNVERIFIED_BID_CENTS` (default
+  $50). Without this, a stranger could park a $10,000 bid on an hour and never
+  pay, denying it to real bidders — griefing that costs the attacker nothing.
+  Over the cap, the bid is refused, nothing is written, and a verification link
+  is sent instead.
+- **Verification is one-way and permanent**, set by consuming a sign-in link or
+  by completing a checkout. Both prove control of the address.
+- **Rate limits** per IP and per email, counted in the database.
+- A losing bid costs nothing; a winning one must clear checkout in five minutes
+  or the hour passes to the next bidder.
+
+The residual risk is accepted and worth stating plainly: someone can burn an
+hour for the price of a throwaway inbox, up to the cap. Lower
+`MAX_UNVERIFIED_BID_CENTS` to tighten it, or set it to `0` to require a
+confirmed email for every bid.
+
+Sessions themselves are passwordless, because the safest password database is
+the one that does not exist.
 
 - Sign-in tokens: 256-bit CSPRNG, single-use, 15-minute expiry, stored only as
   an HMAC. Requesting a new link invalidates outstanding ones. Consumption is a

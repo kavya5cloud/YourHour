@@ -75,6 +75,16 @@ export const env = {
     minIncrementCents: integer('MIN_INCREMENT_CENTS', 100),
     /** Upper bound on a single bid, a guard against fat-finger and abuse. */
     maxBidCents: integer('MAX_BID_CENTS', 100_000_00),
+    /**
+     * Ceiling for a bidder who has not yet proved they own their email address.
+     *
+     * Bidding is open to anyone with an email box, which is what keeps the
+     * hourly cadence usable. The cost is that an unverified stranger could
+     * otherwise park an enormous bid on an hour and simply never pay, denying
+     * it to real bidders. Capping unverified bids bounds the damage of that to
+     * something small, while leaving casual bidding frictionless.
+     */
+    maxUnverifiedBidCents: integer('MAX_UNVERIFIED_BID_CENTS', 5_000),
     /** How long a winner has to complete checkout. */
     paymentWindowSeconds: integer('PAYMENT_WINDOW_SECONDS', 300),
     /** Share of net proceeds pledged to charity, in basis points. */

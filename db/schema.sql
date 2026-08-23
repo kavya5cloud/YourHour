@@ -20,6 +20,12 @@ CREATE TABLE IF NOT EXISTS users (
   disabled_reason text
 );
 
+-- Bidding does not require a verified email -- the bid form is the whole
+-- signup. Verification is proved later, by consuming a sign-in link or by
+-- completing a checkout. Until then the account is capped at a small bid, so
+-- an unverified stranger cannot park a huge bid on an hour and never pay.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified_at timestamptz;
+
 -- Passwordless login. We store only a SHA-256 hash of the token, so a database
 -- leak does not hand an attacker a set of usable login links.
 CREATE TABLE IF NOT EXISTS login_tokens (

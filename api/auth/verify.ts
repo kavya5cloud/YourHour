@@ -86,7 +86,15 @@ export default withErrorHandling(async function handler(req: ApiRequest, res: Ap
   );
   setSessionCookie(res, session.token, session.expiresAt);
 
-  await query(`UPDATE users SET last_login_at = now() WHERE id = $1`, [consumed.user_id]);
+  // Consuming the link proves control of the inbox. This is what lifts the
+  // unverified bid ceiling, so it is set once and never cleared.
+  await query(
+    `UPDATE users
+        SET last_login_at = now(),
+            email_verified_at = COALESCE(email_verified_at, now())
+      WHERE id = $1`,
+    [consumed.user_id],
+  );
   await audit({ action: 'login.verified', actorId: consumed.user_id, ipHash: hashIp(ip) });
 
   redirect(res, '/?signin=ok');
