@@ -122,17 +122,87 @@ if (!databaseUrl) {
     }
   });
 
-  test('POST /api/bids without a session is 401', async () => {
+  test('a first-time bidder can bid without signing in first', async () => {
     await reset();
     const { url, server } = await serve(bidsHandler);
     try {
       const response = await call(`${url}/api/bids`, {
         method: 'POST',
         headers: { origin: ORIGIN, 'content-type': 'application/json' },
-        body: JSON.stringify({ amount: 50, name: 'example.com' }),
+        body: JSON.stringify({ amount: 20, name: 'example.com', email: 'new@example.test' }),
       });
-      assert.equal(response.status, 401);
-      assert.equal(JSON.parse(response.text).error, 'unauthorized');
+      assert.equal(response.status, 201, 'no sign-in gate on bidding');
+      const body = JSON.parse(response.text);
+      assert.equal(body.amountCents, 2000);
+      assert.equal(body.verified, false);
+
+      // The bid form is the signup: the account now exists, unverified.
+      const { rows } = await query<{ email_verified_at: Date | null }>(
+        `SELECT email_verified_at FROM users WHERE email = 'new@example.test'`,
+      );
+      assert.equal(rows.length, 1, 'the account was created by the bid');
+      assert.equal(rows[0]!.email_verified_at, null, 'and is not verified yet');
+    } finally {
+      server.close();
+    }
+  });
+
+  test('a bid with no email and no session is rejected', async () => {
+    await reset();
+    const { url, server } = await serve(bidsHandler);
+    try {
+      const response = await call(`${url}/api/bids`, {
+        method: 'POST',
+        headers: { origin: ORIGIN, 'content-type': 'application/json' },
+        body: JSON.stringify({ amount: 20, name: 'example.com' }),
+      });
+      assert.equal(response.status, 400);
+      assert.match(JSON.parse(response.text).message, /email/i);
+    } finally {
+      server.close();
+    }
+  });
+
+  test('an unverified bidder is capped, and gets a link instead', async () => {
+    await reset();
+    const { url, server } = await serve(bidsHandler);
+    try {
+      emails.length = 0;
+      // Default MAX_UNVERIFIED_BID_CENTS is 5000 ($50).
+      const response = await call(`${url}/api/bids`, {
+        method: 'POST',
+        headers: { origin: ORIGIN, 'content-type': 'application/json' },
+        body: JSON.stringify({ amount: 500, name: 'example.com', email: 'big@example.test' }),
+      });
+      assert.equal(response.status, 403);
+      const body = JSON.parse(response.text);
+      assert.equal(body.error, 'verification_required');
+      assert.equal(body.maxUnverifiedCents, 5000);
+
+      // Nothing was written, and a verification link went out.
+      const { rows } = await query<{ count: string }>(`SELECT count(*)::text FROM bids`);
+      assert.equal(rows[0]!.count, '0', 'the over-cap bid must not be stored');
+      assert.equal(emails.length, 1, 'a verification link was sent');
+      assert.equal(emails[0]!.to, 'big@example.test');
+    } finally {
+      server.close();
+    }
+  });
+
+  test('a verified bidder is not capped', async () => {
+    await reset();
+    await query(
+      `INSERT INTO users (email, email_verified_at) VALUES ('trusted@example.test', now())`,
+    );
+    const { url, server } = await serve(bidsHandler);
+    try {
+      const response = await call(`${url}/api/bids`, {
+        method: 'POST',
+        headers: { origin: ORIGIN, 'content-type': 'application/json' },
+        body: JSON.stringify({ amount: 500, name: 'example.com', email: 'trusted@example.test' }),
+      });
+      assert.equal(response.status, 201, 'a confirmed address clears the ceiling');
+      assert.equal(JSON.parse(response.text).verified, true);
     } finally {
       server.close();
     }
