@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#faf6e8" />
+    <title>The Hour — one page, one owner</title>
+    <style>
+      :root {
+        --paper: #dfe3dc;
+        --paper-high: #f0f3ee;
+        --paper-low: #c6cbc4;
+        --ink: #151815;
+        --soft: #687069;
+        --red: #bb1830;
+        --blue: #173e76;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * { box-sizing: border-box; }
+      html { background: #cbd1c9; }
+      body {
+        min-height: 100vh;
+        margin: 0;
+        color: var(--ink);
+        background:
+          radial-gradient(70rem 32rem at 0 0, #eef1ed 0, transparent 58%),
+          linear-gradient(135deg, #c4cabe, #e6e9e4 50%, #c7cdc5);
+        font-family: var(--mono);
+        font-size: 14px;
+      }
+
+      button, input { font: inherit; }
+      button { -webkit-tap-highlight-color: transparent; }
+      .shell {
+        position: relative;
+        width: min(100%, 704px);
+        min-height: 100vh;
+        margin: auto;
+        overflow: hidden;
+        background: var(--paper);
+        border-inline: 1px solid rgba(21, 24, 21, .24);
+        box-shadow: 0 0 70px rgba(25, 35, 27, .16);
+      }
+      .shell::after {
+        position: absolute;
+        z-index: 0;
+        inset: 0;
+        pointer-events: none;
+        opacity: .33;
+        content: "";
+        background-image: repeating-linear-gradient(0deg, rgba(11, 18, 11, .027) 0 1px, transparent 1px 3px);
+        mix-blend-mode: multiply;
+      }
+      .content { position: relative; z-index: 1; }
+
+      .masthead {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 18px 25px 16px;
+        border-bottom: 1px solid var(--ink);
+      }
+      .wordmark {
+        font: 900 19px/1 var(--sans);
+        letter-spacing: -.075em;
+        text-transform: uppercase;
+      }
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        color: var(--soft);
+        font-size: 10px;
+        letter-spacing: .13em;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+      .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--red); box-shadow: 0 0 0 0 rgba(187, 24, 48, .32); animation: pulse 2s infinite; }
+      @keyframes pulse { 50% { box-shadow: 0 0 0 6px rgba(187, 24, 48, 0); opacity: .65; } }
+
+      .pad { padding: 0 25px; }
+      .eyebrow {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 18px;
+        margin: 27px 0 11px;
+        color: var(--soft);
+        font-size: 10px;
+        letter-spacing: .15em;
+        text-transform: uppercase;
+      }
+      .eyebrow b { color: var(--ink); font-weight: 500; white-space: nowrap; }
+
+      .owner-card {
+        position: relative;
+        overflow: hidden;
+        padding: 24px 21px 17px;
+        border: 1px solid var(--ink);
+        background: var(--paper-high);
+      }
+      .owner-card::before {
+        position: absolute;
+        top: 0; right: 0;
+        width: 112px; height: 112px;
+        content: "";
+        opacity: .08;
+        background: repeating-linear-gradient(45deg, var(--blue) 0 2px, transparent 2px 9px);
+      }
+      .owner-kicker { position: relative; color: var(--red); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; }
+      .owner-name {
+        position: relative;
+        max-width: 11ch;
+        margin-top: 9px;
+        font: 900 clamp(39px, 10vw, 64px)/.89 var(--sans);
+        letter-spacing: -.07em;
+        overflow-wrap: anywhere;
+      }
+      .owner-line { position: relative; max-width: 43ch; margin: 15px 0 0; font: 500 14px/1.45 var(--sans); }
+      .owner-meta {
+        position: relative;
+        display: flex;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 8px 16px;
+        margin-top: 22px;
+        padding-top: 12px;
+        border-top: 1px dashed var(--paper-low);
+        color: var(--soft);
+        font-size: 10px;
+        letter-spacing: .1em;
+        text-transform: uppercase;
+      }
+      .owner-meta strong { color: var(--ink); font-weight: 500; }
+
+      .clock-zone { padding: 27px 0 5px; text-align: center; }
+      .clock { font-size: clamp(56px, 15vw, 86px); font-weight: 500; letter-spacing: -.075em; line-height: .9; font-variant-numeric: tabular-nums; }
+      .clock.urgent { color: var(--red); }
+      .clock-caption { margin-top: 12px; color: var(--soft); font-size: 10px; letter-spacing: .15em; text-transform: uppercase; }
+      .time-bar { width: min(100%, 370px); height: 4px; margin: 16px auto 0; overflow: hidden; background: var(--paper-low); }
+      .time-bar b { display: block; width: 43%; height: 100%; background: var(--red); transform-origin: left; transition: transform .7s linear; }
+
+      .tear { position: relative; height: 35px; margin-top: 8px; }
+      .tear::before { position: absolute; top: 50%; right: -25px; left: -25px; border-top: 2px dashed var(--paper-low); content: ""; }
+      .tear i { position: absolute; top: calc(50% - 11px); width: 22px; height: 22px; border: 1px solid var(--paper-low); border-radius: 50%; background: var(--paper); }
+      .tear i:first-child { left: -36px; }
+      .tear i:last-child { right: -36px; }
+
+      .auction-card { padding: 2px 0 0; }
+      .leader {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 15px;
+        align-items: end;
+        min-height: 55px;
+        padding: 12px 0;
+        border-block: 1px solid var(--paper-low);
+      }
+      .leader-label { display: block; margin-bottom: 4px; color: var(--soft); font-size: 9px; letter-spacing: .13em; text-transform: uppercase; }
+      .leader-name { display: block; overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+      .leader-bid { font-size: 22px; line-height: 1; font-variant-numeric: tabular-nums; }
+      .field { margin-top: 15px; }
+      label { display: block; margin-bottom: 6px; color: var(--soft); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; }
+      .count { float: right; letter-spacing: .04em; }
+      input {
+        width: 100%;
+        padding: 12px 12px;
+        color: var(--ink);
+        border: 1px solid var(--paper-low);
+        border-radius: 0;
+        outline: none;
+        background: rgba(240, 243, 238, .72);
+        font-size: 14px;
+        transition: border-color .15s, box-shadow .15s;
+      }
+      input::placeholder { color: #939a92; }
+      input:focus { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(23, 62, 118, .16); }
+      .bid-row { display: grid; grid-template-columns: 132px 1fr; gap: 11px; align-items: end; margin-top: 15px; }
+      .bid-row .field { margin: 0; }
+      .claim {
+        width: 100%;
+        min-height: 45px;
+        cursor: pointer;
+        border: 1px solid var(--ink);
+        border-radius: 0;
+        background: var(--ink);
+        color: var(--paper-high);
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: .12em;
+        text-transform: uppercase;
+        transition: background .15s, border-color .15s, transform .1s;
+      }
+      .claim:hover { border-color: var(--red); background: var(--red); }
+      .claim:active { transform: translateY(1px); }
+      .claim:focus-visible, .demo-button:focus-visible, .close:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+      .message { min-height: 20px; margin: 10px 0 0; color: var(--red); font-size: 11px; }
+      .rules { margin: 0; color: var(--soft); font-size: 10.5px; line-height: 1.55; }
+      .rules strong { color: var(--ink); font-weight: 500; }
+
+      .archive { margin-bottom: 1px; border-top: 1px solid var(--paper-low); }
+      .archive-row { display: grid; grid-template-columns: 58px 1fr auto; gap: 12px; align-items: baseline; padding: 11px 0; border-bottom: 1px dotted var(--paper-low); }
+      .archive-row time { color: var(--soft); font-size: 11px; }
+      .archive-row b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+      .archive-row span { font-variant-numeric: tabular-nums; }
+      .receipt { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 24px; padding: 15px 0 29px; border-top: 1px solid var(--ink); color: var(--soft); font-size: 10px; letter-spacing: .09em; text-transform: uppercase; }
+      .receipt strong { display: block; margin-top: 4px; color: var(--ink); font-size: 14px; font-weight: 600; letter-spacing: -.02em; }
+      .receipt div:last-child { text-align: right; }
+
+      .prototype {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 14px;
+        padding: 12px 25px;
+        border-top: 1px solid var(--paper-low);
+        background: rgba(23, 62, 118, .05);
+        color: var(--blue);
+        font-size: 10px;
+        line-height: 1.5;
+      }
+      .prototype b { letter-spacing: .08em; text-transform: uppercase; }
+      .demo-button { flex: none; cursor: pointer; border: 1px solid var(--blue); border-radius: 0; background: transparent; color: var(--blue); padding: 7px 9px; font-size: 9px; letter-spacing: .1em; text-transform: uppercase; }
+      .demo-button:hover { background: var(--blue); color: white; }
+
+      dialog { width: min(calc(100% - 32px), 454px); padding: 0; overflow: hidden; border: 1px solid var(--ink); border-radius: 0; background: var(--paper-high); color: var(--ink); box-shadow: 0 20px 60px rgba(15, 20, 16, .38); }
+      dialog::backdrop { background: rgba(18, 23, 18, .55); backdrop-filter: blur(2px); }
+      .dialog-inner { padding: 24px; }
+      .dialog-kicker { color: var(--red); font-size: 10px; letter-spacing: .13em; text-transform: uppercase; }
+      .dialog-inner h2 { margin: 8px 0 5px; font: 800 31px/.98 var(--sans); letter-spacing: -.055em; }
+      .dialog-inner p { margin: 0; color: var(--soft); font-size: 12px; line-height: 1.55; }
+      .ticket { display: grid; grid-template-columns: 1fr auto; gap: 12px; margin: 20px 0; padding: 14px 0; border-block: 1px dashed var(--paper-low); font-size: 12px; }
+      .ticket span { color: var(--soft); }
+      .ticket b { text-align: right; font-weight: 600; }
+      .dialog-actions { display: flex; gap: 9px; }
+      .dialog-actions button { min-height: 42px; flex: 1; cursor: pointer; border: 1px solid var(--ink); border-radius: 0; background: var(--ink); color: var(--paper-high); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
+      .dialog-actions .close { background: transparent; color: var(--ink); }
+      .dialog-actions button:hover { background: var(--red); border-color: var(--red); color: white; }
+
+      /* Game-show refresh */
+      :root { --paper: #fff8dc; --paper-high: #fffdf2; --paper-low: #d9cfae; --ink: #1c1640; --soft: #685f7d; --red: #ff4d6d; --blue: #6046d7; --sun: #ffc928; --aqua: #64e5d5; }
+      html { background: var(--sun); }
+      body { background: radial-gradient(55rem 42rem at -10% 0%, #ff6b8b 0, transparent 58%), radial-gradient(52rem 45rem at 110% 80%, var(--aqua) 0, transparent 54%), var(--sun); }
+      .shell { border-inline: 3px solid var(--ink); box-shadow: 12px 12px 0 var(--ink); }
+      .shell::after { opacity: .16; }
+      .masthead { padding: 19px 25px 17px; border-bottom: 3px solid var(--ink); background: var(--sun); }
+      .wordmark { font-size: 21px; letter-spacing: -.09em; }
+      .status { color: var(--ink); font-weight: 700; }
+      .live-dot { width: 8px; height: 8px; border: 1px solid var(--ink); box-shadow: 0 0 0 0 rgba(255, 77, 109, .32); }
+      .eyebrow { margin-top: 29px; color: var(--blue); font-weight: 700; }
+      .owner-card { border: 3px solid var(--ink); border-radius: 19px; box-shadow: 6px 7px 0 var(--ink); }
+      .owner-card::before { opacity: .15; background: repeating-linear-gradient(45deg, var(--blue) 0 3px, transparent 3px 11px); }
+      .owner-kicker { display: inline-block; padding: 4px 7px; border: 1px solid var(--ink); border-radius: 99px; background: var(--aqua); color: var(--ink); font-size: 9px; font-weight: 700; letter-spacing: .12em; transform: rotate(-2deg); }
+      .owner-name { font-size: clamp(42px, 10vw, 66px); line-height: .85; }
+      .owner-line { font-weight: 600; }
+      .owner-meta { border-top-width: 2px; }
+      .clock-zone { padding: 30px 0 7px; }
+      .clock { display: inline-block; padding: 5px 13px 8px; border: 3px solid var(--ink); border-radius: 14px; background: var(--ink); color: var(--sun); font-size: clamp(53px, 14vw, 78px); font-weight: 700; letter-spacing: -.09em; box-shadow: 5px 5px 0 var(--red); }
+      .time-bar { height: 8px; border: 2px solid var(--ink); border-radius: 99px; background: var(--paper-high); }
+      .tear::before { border-top: 3px dashed var(--ink); }
+      .tear i { border: 2px solid var(--ink); background: var(--sun); }
+      .leader { padding: 14px 15px; border: 3px solid var(--ink); border-radius: 14px; background: var(--aqua); box-shadow: 4px 4px 0 var(--ink); }
+      .leader-label { color: var(--ink); font-weight: 700; }
+      .leader-bid { padding: 6px 8px; border: 2px solid var(--ink); border-radius: 9px; background: var(--sun); }
+      input { border: 2px solid var(--ink); border-radius: 9px; background: var(--paper-high); }
+      input:focus { border-color: var(--blue); box-shadow: 4px 4px 0 var(--blue); }
+      .claim { border: 3px solid var(--ink); border-radius: 10px; background: var(--red); color: white; }
+      .claim:hover { border-color: var(--ink); background: var(--blue); box-shadow: 4px 4px 0 var(--ink); transform: translate(-2px, -2px); }
+      .claim:active { transform: translate(2px, 2px); box-shadow: none; }
+      .archive { border-top: 2px solid var(--ink); }
+      .archive-row { border-bottom-width: 2px; }
+      .receipt { padding: 17px 15px; border: 3px solid var(--ink); border-radius: 14px; background: #e8dcff; }
+      .prototype { border-top: 3px solid var(--ink); background: var(--blue); color: white; }
+      .demo-button { border: 2px solid var(--ink); border-radius: 9px; background: var(--sun); color: var(--ink); font-weight: 700; }
+      .demo-button:hover { background: var(--aqua); color: var(--ink); }
+      dialog { border: 3px solid var(--ink); border-radius: 18px; box-shadow: 10px 10px 0 var(--ink); }
+      .dialog-kicker { display: inline-block; padding: 4px 7px; border-radius: 99px; background: var(--sun); color: var(--ink); font-weight: 700; }
+      .ticket { padding: 14px; border: 2px dashed var(--ink); border-radius: 10px; background: #f1ebff; }
+      .crowd { display: flex; flex-wrap: wrap; justify-content: center; gap: 7px; margin-top: 14px; }
+      .crowd span { padding: 5px 8px; border: 1px solid var(--ink); border-radius: 99px; background: var(--paper-high); color: var(--ink); font-size: 10px; font-weight: 600; }
+      .sparkle { position: fixed; z-index: 20; width: 10px; height: 10px; border-radius: 2px; pointer-events: none; animation: sparkle .95s ease-out forwards; }
+      @keyframes sparkle { from { opacity: 1; transform: translate(0, 0) rotate(0deg) scale(1); } to { opacity: 0; transform: translate(var(--x), var(--y)) rotate(310deg) scale(.2); } }
+
+      /* Soft app-receipt treatment */
+      :root { --paper: #faf6e8; --paper-high: #ffffff; --paper-low: #eeeeea; --ink: #56545a; --soft: #b2afb2; --red: #ffdb61; --blue: #9a8dec; --sun: #ffdc63; --aqua: #b5eed8; }
+      html { background: #faf6e8; }
+      body { display: grid; min-height: 100vh; place-items: start center; padding: 20px 16px; background: radial-gradient(circle at 50% 44%, #fffefa 0, #faf6e8 67%); }
+      .shell { width: min(100%, 482px); min-height: unset; margin: 0; overflow: hidden; border: 0; border-radius: 20px; background: #fff; box-shadow: 0 13px 33px rgba(116, 96, 31, .11); }
+      .shell::after { display: none; }
+      .masthead { justify-content: flex-start; min-height: 58px; padding: 17px 24px 10px; border: 0; background: white; }
+      .wordmark { color: #b9b5b8; font-size: 12px; font-weight: 700; letter-spacing: -.03em; text-transform: lowercase; }
+      .status { position: absolute; top: 18px; right: 19px; color: #c9c5c7; font-size: 8px; letter-spacing: .06em; }
+      .live-dot { width: 5px; height: 5px; border: 0; background: #a7e3c9; }
+      .pad { padding: 0 30px; }
+      .eyebrow { margin: 9px 0 12px; color: #c2bec1; font-size: 8px; font-weight: 500; letter-spacing: .05em; text-transform: none; }
+      .eyebrow b { color: #bbb6ba; font-weight: 500; }
+      .owner-card { display: flex; flex-direction: column; align-items: center; padding: 0 8px 8px; border: 0; border-radius: 0; background: transparent; box-shadow: none; text-align: center; }
+      .owner-card::before { display: none; }
+      .owner-kicker { order: 2; margin-top: 9px; padding: 0; border: 0; border-radius: 0; background: transparent; color: #c5c1c4; font-size: 8px; font-weight: 500; letter-spacing: .04em; text-transform: none; transform: none; }
+      .owner-orb { order: 1; display: grid; width: 103px; height: 103px; place-items: center; border-radius: 50%; background: #b5eed8; box-shadow: inset 0 0 0 1px rgba(116, 154, 133, .05); }
+      .owner-orb span { display: grid; width: 100%; height: 100%; place-items: center; padding-bottom: 3px; color: #478d75; font: 800 58px/1 var(--sans); letter-spacing: 0; text-align: center; text-transform: lowercase; }
+      .owner-name { order: 3; max-width: none; margin-top: 7px; color: #77747a; font-size: 21px; font-weight: 700; line-height: 1; letter-spacing: -.05em; }
+      .owner-line { order: 4; max-width: 31ch; margin-top: 7px; color: #aaa7aa; font-size: 10px; font-weight: 500; line-height: 1.45; }
+      .owner-meta { order: 5; justify-content: center; gap: 8px; margin-top: 10px; padding-top: 0; border: 0; color: #bbb7bb; font-size: 8px; letter-spacing: .02em; text-transform: none; }
+      .owner-meta span:last-child { display: none; }
+      .clock-zone { padding: 16px 0 8px; }
+      .clock { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; color: #706c72; font-size: 33px; font-weight: 600; letter-spacing: -.07em; }
+      .clock.urgent { color: #e5ba43; }
+      .clock-caption { margin-top: 4px; color: #c1bdc0; font-size: 8px; letter-spacing: .04em; text-transform: none; }
+      .time-bar { width: 142px; height: 3px; margin-top: 10px; border: 0; border-radius: 4px; background: #f4f1eb; }
+      .time-bar b { background: #ffdc63; }
+      .crowd { margin-top: 9px; gap: 4px; }
+      .crowd span { padding: 3px 6px; border: 0; border-radius: 99px; background: #f8f6f1; color: #b6b2b5; font-size: 8px; font-weight: 500; }
+      .tear { height: 22px; margin: 3px -30px 0; background: linear-gradient(90deg, transparent 0 6%, #faf6e8 6% 94%, transparent 94%); }
+      .tear::before { border-top: 1px dashed #ece9e3; }
+      .tear i { display: none; }
+      .auction-card { padding-top: 3px; }
+      .leader { min-height: 0; padding: 10px 0; border: 0; border-bottom: 1px solid #f0eeea; border-radius: 0; background: transparent; box-shadow: none; }
+      .leader-label { color: #c0bdc0; font-size: 8px; font-weight: 500; letter-spacing: .03em; text-transform: none; }
+      .leader-name { color: #858187; font-size: 11px; font-weight: 600; }
+      .leader-bid { padding: 0; border: 0; border-radius: 0; background: transparent; color: #77737a; font-size: 17px; font-weight: 600; }
+      .field { margin-top: 12px; }
+      label { margin-bottom: 5px; color: #b6b2b5; font-size: 8px; letter-spacing: .04em; text-transform: none; }
+      input { padding: 10px 11px; border: 1px solid #f0eeea; border-radius: 8px; background: #fcfcfb; color: #79767b; font-size: 11px; }
+      input::placeholder { color: #d0cccf; }
+      input:focus { border-color: #d9d2ff; box-shadow: 0 0 0 2px rgba(154, 141, 236, .09); }
+      .bid-row { grid-template-columns: 103px 1fr; gap: 10px; margin-top: 12px; }
+      .claim { min-height: 39px; border: 0; border-radius: 999px; background: #ffdc63; box-shadow: 0 4px 8px rgba(217, 171, 42, .23); color: #91753c; font-size: 9px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+      .claim:hover { border: 0; background: #ffd14b; box-shadow: 0 5px 10px rgba(217, 171, 42, .28); transform: translateY(-1px); }
+      .claim:active { transform: translateY(1px); box-shadow: 0 2px 4px rgba(217, 171, 42, .19); }
+      .message { color: #d4ab42; font-size: 9px; }
+      .rules { color: #c4c0c3; font-size: 8px; line-height: 1.55; }
+      .rules strong { color: #aaa5aa; font-weight: 600; }
+      .archive { border-top: 1px solid #f0eeea; }
+      .archive-row { padding: 8px 0; border-bottom: 1px dotted #ece9e3; font-size: 9px; }
+      .archive-row time { color: #c4c0c3; font-size: 8px; }
+      .archive-row b { color: #8f8a90; font-weight: 500; }
+      .archive-row span { color: #7e7980; }
+      .receipt { margin-top: 15px; padding: 12px 0 20px; border: 0; border-top: 1px solid #f0eeea; border-radius: 0; background: transparent; color: #bebabe; font-size: 8px; letter-spacing: .04em; text-transform: none; }
+      .receipt strong { color: #77737a; font-size: 11px; font-weight: 600; }
+      .prototype { padding: 11px 20px; border-top: 1px solid #f0eeea; background: #fcfcfb; color: #bbb7bb; font-size: 8px; }
+      .demo-button { border: 0; border-radius: 999px; background: #f2efff; color: #9187ca; font-size: 8px; font-weight: 600; letter-spacing: .04em; text-transform: none; }
+      .demo-button:hover { background: #eae5ff; color: #8278bc; }
+      dialog { border: 0; border-radius: 18px; box-shadow: 0 13px 35px rgba(86, 71, 20, .19); }
+      .dialog-kicker { padding: 4px 7px; background: #f6f3ec; color: #b5b1b5; font-size: 8px; }
+      .dialog-inner h2 { color: #727077; }
+      .ticket { border: 1px dashed #ebe7de; background: #fcfbf7; }
+      .dialog-actions button { border: 0; border-radius: 999px; background: #ffdc63; color: #91753c; }
+      .dialog-actions .close { background: #f7f5f1; color: #989399; }
+      .sparkle { width: 7px; height: 7px; opacity: .85; }
+      .thank-you-card { padding: 25px 20px 18px; background: #fff; text-align: center; }
+      .celebrate-mark { display: grid; width: 42px; height: 42px; place-items: center; margin: 0 auto 8px; border-radius: 50%; background: #fff4c9; font-size: 25px; }
+      .thank-you-card h2 { margin: 0 0 5px; color: #4d4a51; font: 700 20px/1 var(--sans); letter-spacing: -.04em; }
+      .thank-you-card > p { max-width: 25ch; margin: 0 auto; color: #aaa6aa; font-size: 9px; line-height: 1.5; }
+      .receipt-cut { height: 18px; margin: 17px -20px 0; border-top: 1px dashed #d9d6d2; }
+      .ticket-details { display: grid; grid-template-columns: 1fr 1fr; gap: 13px 20px; padding: 0 2px 14px; text-align: left; }
+      .ticket-details div { min-width: 0; }
+      .ticket-details span { display: block; margin-bottom: 3px; color: #b9b5b9; font-size: 7px; letter-spacing: .04em; text-transform: uppercase; }
+      .ticket-details b { display: block; overflow: hidden; color: #555158; font-size: 10px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+      .ticket-charity { display: grid; grid-template-columns: 28px 1fr auto; gap: 8px; align-items: center; padding: 10px; border-radius: 9px; background: #f6fbf7; text-align: left; }
+      .ticket-charity > span { display: grid; width: 25px; height: 25px; place-items: center; border-radius: 50%; background: #dff4e7; color: #73a482; font-size: 15px; }
+      .ticket-charity strong, .ticket-charity small { display: block; }
+      .ticket-charity strong { color: #729480; font-size: 9px; font-weight: 600; }
+      .ticket-charity small { margin-top: 2px; color: #a9b7ad; font-size: 7px; }
+      .ticket-charity > b { color: #6a9078; font-size: 11px; }
+      .barcode { display: flex; align-items: stretch; justify-content: center; gap: 2px; height: 37px; margin: 17px auto 3px; }
+      .barcode i { width: 2px; background: #56525a; }
+      .barcode i:nth-child(2n) { width: 4px; }
+      .barcode i:nth-child(3n) { height: 29px; align-self: flex-end; }
+      .barcode i:nth-child(4n) { width: 1px; }
+      .barcode-number { color: #89858a; font-family: var(--mono); font-size: 7px; letter-spacing: .22em; }
+      .thank-you-card .dialog-actions { margin-top: 16px; }
+      .thank-you-card .dialog-actions button { min-height: 38px; border-radius: 999px; background: #ffdc63; box-shadow: 0 4px 8px rgba(217, 171, 42, .23); color: #91753c; font-size: 9px; font-weight: 700; }
+      dialog { width: min(calc(100% - 32px), 332px); border-radius: 16px; }
+      .thank-you-card { padding: 22px 18px 16px; font-family: var(--sans); }
+      .celebrate-mark { width: 35px; height: 35px; margin-bottom: 8px; background: #fff3c6; color: #d8ac37; font: 700 22px/1 var(--sans); }
+      .thank-you-card h2 { margin-bottom: 4px; font-size: 18px; }
+      .thank-you-card > p { max-width: 27ch; font-size: 8px; line-height: 1.45; }
+      .receipt-cut { position: relative; height: 15px; margin: 14px -18px 0; }
+      .ticket-details { gap: 11px 16px; padding-bottom: 12px; }
+      .ticket-details span { font-size: 6.5px; }
+      .ticket-details b { font-family: var(--sans); font-size: 9px; }
+      .ticket-charity { padding: 9px; }
+      .ticket-charity strong { font-size: 8px; }
+      .ticket-charity small { font-size: 6.5px; }
+      .ticket-charity > b { font-size: 10px; }
+      .barcode { height: 29px; margin: 14px auto 3px; }
+      .barcode i:nth-child(3n) { height: 23px; }
+      .barcode-number { font-size: 6px; }
+      .thank-you-card .dialog-actions { margin-top: 13px; }
+      .thank-you-card .dialog-actions button { min-height: 34px; font-size: 8px; }
+      /* Centered ticket receipt: pale modal around a narrow, physical ticket. */
+      dialog { width: min(calc(100% - 32px), 520px); max-width: 520px; padding: 42px 22px; border-radius: 12px; background: #f5f7fe; box-shadow: 0 22px 70px rgba(18, 24, 44, .18); }
+      dialog::backdrop { background: rgba(9, 12, 21, .72); backdrop-filter: blur(5px); }
+      .thank-you-card { position: relative; display: flex; flex-direction: column; width: 270px; min-height: 428px; margin: 0 auto; padding: 28px 19px 24px; overflow: hidden; border-radius: 10px 10px 0 0; background: white; box-shadow: 0 6px 16px rgba(79, 94, 125, .08); }
+      .thank-you-card::after { position: absolute; z-index: 2; right: 0; bottom: 0; left: 0; height: 18px; content: ""; background: radial-gradient(circle at 10px 0, #f5f7fe 9px, transparent 9.5px) 0 0 / 20px 18px repeat-x; }
+      .celebrate-mark { width: 39px; height: 39px; margin-bottom: 13px; background: transparent; color: initial; font-size: 28px; }
+      .thank-you-card h2 { margin-bottom: 6px; color: #17171a; font-size: 17px; font-weight: 700; letter-spacing: -.035em; }
+      .thank-you-card > p { max-width: 23ch; color: #929298; font-size: 8px; line-height: 1.5; }
+      .receipt-cut { position: relative; height: 27px; margin: 20px -19px 0; border-top: 1px dashed #aaa8ad; }
+      .receipt-cut::before, .receipt-cut::after { position: absolute; top: -9px; width: 17px; height: 17px; border-radius: 50%; background: #f5f7fe; content: ""; }
+      .receipt-cut::before { left: -8px; }
+      .receipt-cut::after { right: -8px; }
+      .ticket-details { gap: 15px 22px; padding: 0 0 15px; }
+      .ticket-details span { margin-bottom: 5px; color: #96949a; font-size: 7px; letter-spacing: 0; }
+      .ticket-details b { color: #242329; font-family: var(--sans); font-size: 9px; font-weight: 650; }
+      .ticket-details div:nth-child(3) { grid-column: 1 / -1; }
+      .ticket-details div:nth-child(4) { display: none; }
+      .ticket-charity { grid-template-columns: 25px 1fr auto; gap: 7px; padding: 10px; border-radius: 7px; background: #f8f9fd; }
+      .ticket-charity > span { width: 23px; height: 23px; background: #e6f5ec; color: #75a686; font-size: 13px; }
+      .ticket-charity strong { color: #34343a; font-size: 8px; }
+      .ticket-charity small { color: #9d9ca2; font-size: 6.5px; }
+      .ticket-charity > b { color: #2b2b30; font-size: 9px; }
+      .barcode { position: relative; width: 155px; height: 58px; margin: auto auto 0; padding-top: 14px; border-top: 2px dashed #f0f0f2; }
+      .barcode i { width: 3px; height: 38px; background: #16161b; }
+      .barcode i:nth-child(2n) { width: 2px; }
+      .barcode i:nth-child(3n) { width: 5px; height: 34px; }
+      .barcode i:nth-child(4n) { width: 1px; }
+      .barcode-number { position: relative; z-index: 1; margin-top: 2px; color: #46454a; font-size: 6px; letter-spacing: .18em; }
+      .thank-you-card .dialog-actions { display: none; }
+      @media (max-width: 420px) { dialog { padding: 26px 12px; } }
+      .shell { overflow: visible; }
+      .content { overflow: hidden; border-radius: 20px 20px 0 0; }
+      .content::after { position: absolute; z-index: 3; right: 0; bottom: -1px; left: 0; height: 14px; content: ""; pointer-events: none; background: linear-gradient(135deg, transparent 7px, #fff 0) 0 0 / 14px 14px repeat-x, linear-gradient(225deg, transparent 7px, #fff 0) 0 0 / 14px 14px repeat-x; }
+      .prototype { position: relative; margin-top: -1px; border-radius: 0 0 20px 20px; }
+      .receipt { position: relative; }
+      .receipt::before { position: absolute; right: 0; top: -7px; left: 0; height: 7px; content: ""; background: linear-gradient(135deg, transparent 4px, #fff 0) 0 0 / 8px 8px repeat-x, linear-gradient(225deg, transparent 4px, #fff 0) 0 0 / 8px 8px repeat-x; }
+      .charity-note { margin: 10px 0 0; padding: 8px 10px; border-radius: 8px; background: #f5fbf6; color: #aaa7aa; font-size: 8px; line-height: 1.5; text-align: center; }
+      .charity-note strong { color: #8b9e8e; font-weight: 600; }
+      .bid-slip { display: none; position: relative; margin-top: 14px; padding: 13px 12px 16px; overflow: hidden; background: #fffdf9; color: #989398; font-size: 9px; box-shadow: 0 6px 15px rgba(108, 91, 36, .06); }
+      .bid-slip.visible { display: block; animation: print-in .35s cubic-bezier(.2,.8,.2,1); }
+      .bid-slip::before, .bid-slip::after { position: absolute; right: 0; left: 0; height: 7px; content: ""; background: linear-gradient(135deg, transparent 4px, #faf6e8 0) 0 0 / 8px 8px repeat-x, linear-gradient(225deg, transparent 4px, #faf6e8 0) 0 0 / 8px 8px repeat-x; }
+      .bid-slip::before { top: 0; }
+      .bid-slip::after { bottom: 0; transform: rotate(180deg); }
+      .slip-head { display: flex; justify-content: space-between; margin-bottom: 9px; color: #c2bec1; font-size: 8px; letter-spacing: .05em; text-transform: uppercase; }
+      .slip-row { display: flex; justify-content: space-between; gap: 16px; padding: 5px 0; border-top: 1px dotted #ece9e3; }
+      .slip-row b { max-width: 55%; overflow: hidden; color: #77737a; font-weight: 600; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+      .slip-foot { margin-top: 8px; color: #b7b3b6; font-size: 8px; text-align: center; }
+      @keyframes print-in { from { opacity: 0; transform: translateY(-8px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+      @media (max-width: 480px) {
+        .masthead, .pad { padding-inline: 17px; }
+        .masthead { padding-top: 16px; }
+        .prototype { padding-inline: 17px; }
+        .owner-card { padding: 21px 17px 16px; }
+        .bid-row { grid-template-columns: 108px 1fr; }
+        .receipt { gap: 8px; }
+      }
+      @media (prefers-reduced-motion: reduce) { .live-dot { animation: none; } }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <div class="content">
+        <header class="masthead">
+          <div class="wordmark">The Hour</div>
+          <div class="status"><i class="live-dot"></i><span id="watchers">46 watching</span></div>
+        </header>
+
+        <div class="pad">
+          <section aria-label="The current owner">
+            <div class="eyebrow"><span>Now showing</span><b id="current-label">Hour 847</b></div>
+            <article class="owner-card">
+              <div class="owner-kicker">The current hour</div>
+              <div class="owner-orb" aria-label="Current owner's logo"><span id="owner-logo">s</span></div>
+              <div class="owner-name" id="owner-name">see.io</div>
+              <p class="owner-line" id="owner-line">Describe an idea. Get a live website in minutes.</p>
+              <div class="owner-meta"><span id="owner-paid">Paid $42</span><span id="expiry">Expires at 9:00 PM</span></div>
+            </article>
+            <div class="clock-zone">
+              <div class="clock" id="clock" aria-live="polite">18:42</div>
+              <div class="clock-caption">until this hour tears away</div>
+              <div class="time-bar" aria-hidden="true"><b id="time-bar"></b></div>
+              <div class="crowd" aria-label="Live crowd reactions"><span>🔥 12 want it</span><span>👀 <span id="crowd-watchers">46</span> watching</span><span>⚡ ends soon</span></div>
+            </div>
+          </section>
+
+          <div class="tear" aria-hidden="true"><i></i><i></i></div>
+
+          <section class="auction-card" aria-labelledby="auction-title">
+            <div class="eyebrow"><span id="auction-title">Next up — make it yours</span><b id="next-label">Hour 848</b></div>
+            <div class="leader" aria-live="polite">
+              <div><span class="leader-label">Current high bid</span><strong class="leader-name" id="leader-name">joni.ai</strong></div>
+              <div class="leader-bid" id="leader-bid">$71</div>
+            </div>
+            <form id="bid-form" novalidate>
+              <div class="field"><label for="name">Your name or link</label><input id="name" name="name" maxlength="24" placeholder="yoursite.com" autocomplete="off" /></div>
+              <div class="field"><label for="message">One line <span class="count" id="count">0 / 90</span></label><input id="message" name="message" maxlength="90" placeholder="Say the thing." autocomplete="off" /></div>
+              <div class="field"><label for="email">Email for winner checkout</label><input id="email" name="email" type="email" placeholder="you@company.com" autocomplete="email" /></div>
+              <div class="bid-row">
+                <div class="field"><label for="amount">Your bid</label><input id="amount" name="amount" inputmode="numeric" value="72" aria-describedby="bid-help" /></div>
+                <button class="claim" type="submit">Place bid ✦</button>
+              </div>
+              <p class="message" id="form-message" role="alert"></p>
+              <p class="rules" id="bid-help"><strong>No payment is taken now.</strong> If you lead at rollover, we’ll email a Polar checkout link. You have 5 minutes to pay.</p>
+              <p class="charity-note">♡ <strong>50% of net proceeds from paid winning hours is donated to charity.</strong></p>
+              <section class="bid-slip" id="bid-slip" aria-live="polite" aria-label="Your bid receipt">
+                <div class="slip-head"><span>Your bid receipt</span><span id="slip-number">#—</span></div>
+                <div class="slip-row"><span>Listing</span><b id="slip-name">—</b></div>
+                <div class="slip-row"><span>Bid</span><b id="slip-bid">—</b></div>
+                <div class="slip-row"><span>Potential charity share</span><b id="slip-charity">—</b></div>
+                <div class="slip-foot">If you lead at rollover, we’ll email your Polar checkout link.</div>
+              </section>
+            </form>
+          </section>
+
+          <section aria-labelledby="archive-title">
+            <div class="eyebrow"><span id="archive-title">Hall of fame</span><b id="archive-count">6 hours sold</b></div>
+            <div class="archive" id="archive"></div>
+            <div class="receipt"><div>Total raised<strong id="total-raised">$338</strong></div><div>Highest hour<strong id="highest-hour">$88</strong></div></div>
+          </section>
+        </div>
+
+        <aside class="prototype"><span><b>Interactive prototype.</b> No money moves. The countdown and bids are simulated.</span><button class="demo-button" id="demo-speed" type="button">Fast-forward 1 hour</button></aside>
+      </div>
+    </main>
+
+    <dialog id="confirmation" aria-labelledby="dialog-title">
+      <div class="dialog-inner thank-you-card">
+        <div class="celebrate-mark" aria-hidden="true">🎉</div>
+        <h2 id="dialog-title">Bid saved!</h2>
+        <p>No payment was taken. If you lead at rollover, we’ll email your Polar checkout link.</p>
+        <div class="receipt-cut"></div>
+        <div class="ticket-details">
+          <div><span>Bid ID</span><b id="ticket-number">—</b></div>
+          <div><span>Winning bid</span><b id="ticket-bid">—</b></div>
+          <div><span>Date &amp; time</span><b id="ticket-time">—</b></div>
+          <div><span>Listing</span><b id="ticket-name">—</b></div>
+        </div>
+        <div class="ticket-charity"><span>♡</span><div><strong>50% of net paid proceeds goes to charity</strong><small id="ticket-charity-copy">—</small></div><b id="ticket-charity">—</b></div>
+        <div class="barcode" aria-label="Receipt barcode"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="barcode-number" id="barcode-number">—</div>
+        <div class="dialog-actions"><button id="confirm-bid" type="button">Got it</button></div>
+      </div>
+    </dialog>
+
+    <script>
+      (() => {
+        const $ = (selector) => document.querySelector(selector);
+        const money = (value) => `$${Number(value).toLocaleString('en-US')}`;
+        const sampleArchive = [
+          { hour: 846, name: 'postiz.io', bid: 61 },
+          { hour: 845, name: 'cal.com', bid: 19 },
+          { hour: 844, name: 'tally.so', bid: 88 },
+          { hour: 843, name: 'resend.com', bid: 54 },
+          { hour: 842, name: 'raycast.com', bid: 76 },
+          { hour: 841, name: 'linear.app', bid: 40 }
+        ];
+        const rivals = ['polar.sh', 'cal.com', 'linear.app', 'tally.so', 'raycast.com'];
+        const state = { hour: 847, owner: { name: 'see.io', line: 'Describe an idea. Get a live website in minutes.', bid: 42 }, lead: { name: 'joni.ai', line: 'Your personal AI computer.', bid: 71 }, archive: sampleArchive, endsAt: Date.now() + 1122000, shortMode: false, pending: null };
+
+        function renderArchive() {
+          $('#archive').innerHTML = state.archive.slice(0, 6).map((entry) => `<div class="archive-row"><time>Hour ${entry.hour}</time><b>${escapeHtml(entry.name)}</b><span>${money(entry.bid)}</span></div>`).join('');
+          const total = state.archive.reduce((sum, item) => sum + item.bid, 0);
+          $('#archive-count').textContent = `${state.archive.length} hours sold`;
+          $('#total-raised').textContent = money(total);
+          $('#highest-hour').textContent = money(Math.max(...state.archive.map(item => item.bid)));
+        }
+        function escapeHtml(value) { const node = document.createElement('div'); node.textContent = value; return node.innerHTML; }
+        function renderLead() {
+          $('#leader-name').textContent = state.lead.name;
+          $('#leader-bid').textContent = state.lead.bid ? money(state.lead.bid) : '$1';
+          const amount = $('#amount');
+          amount.min = state.lead.bid + 1;
+          if (document.activeElement !== amount) amount.value = state.lead.bid + 1;
+        }
+        function renderOwner() {
+          $('#current-label').textContent = `Hour ${state.hour}`;
+          $('#next-label').textContent = `Hour ${state.hour + 1}`;
+          $('#owner-name').textContent = state.owner.name;
+          $('#owner-logo').textContent = state.owner.name.replace(/^https?:\/\//, '').trim().charAt(0) || '✦';
+          $('#owner-line').textContent = state.owner.line;
+          $('#owner-paid').textContent = `Paid ${money(state.owner.bid)}`;
+        }
+        function updateClock() {
+          const remaining = Math.max(0, state.endsAt - Date.now());
+          const seconds = Math.ceil(remaining / 1000);
+          const mins = Math.floor(seconds / 60);
+          const secs = seconds % 60;
+          $('#clock').textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+          $('#clock').classList.toggle('urgent', seconds <= 30);
+          const duration = state.shortMode ? 60000 : 1800000;
+          $('#time-bar').style.transform = `scaleX(${Math.max(.015, remaining / duration)})`;
+          if (remaining === 0) rollover();
+        }
+        function rollover() {
+          state.archive.unshift({ hour: state.hour, name: state.owner.name, bid: state.owner.bid });
+          state.hour += 1;
+          state.owner = { ...state.lead };
+          state.lead = { name: 'No bids yet', line: '', bid: 0 };
+          state.endsAt = Date.now() + (state.shortMode ? 60000 : 1800000);
+          renderOwner(); renderLead(); renderArchive();
+          $('#form-message').textContent = `${state.owner.name} now owns this hour.`;
+        }
+        function showConfirmation(entry) {
+          const receiptId = `${Math.floor(100000 + Math.random() * 900000)}`;
+          const time = new Intl.DateTimeFormat('en-US', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date());
+          state.pending = entry;
+          state.lead = entry;
+          renderLead();
+          $('#ticket-number').textContent = `OH${receiptId}`;
+          $('#ticket-name').textContent = entry.name;
+          $('#ticket-bid').textContent = money(entry.bid);
+          $('#ticket-time').textContent = time;
+          $('#ticket-charity').textContent = '50% net';
+          $('#ticket-charity-copy').textContent = `Potential donation after paid checkout`;
+          $('#barcode-number').textContent = `OH ${receiptId.slice(0, 3)} ${receiptId.slice(3)} ${String(entry.bid).padStart(4, '0')}`;
+          $('#slip-number').textContent = `#${receiptId.slice(-4)}`;
+          $('#slip-name').textContent = entry.name;
+          $('#slip-bid').textContent = money(entry.bid);
+          $('#slip-charity').textContent = '50% net';
+          $('#bid-slip').classList.add('visible');
+          $('#form-message').textContent = `You lead the next hour at ${money(entry.bid)}. No payment was taken.`;
+          $('#bid-form').reset(); $('#count').textContent = '0 / 90';
+          $('#confirmation').showModal();
+          celebrate();
+        }
+        function celebrate() {
+          const colors = ['#ff4d6d', '#ffc928', '#64e5d5', '#6046d7', '#ffffff'];
+          for (let index = 0; index < 32; index += 1) {
+            const bit = document.createElement('i');
+            const angle = Math.random() * Math.PI * 2;
+            const distance = 80 + Math.random() * 190;
+            bit.className = 'sparkle';
+            bit.style.left = `${45 + Math.random() * 10}vw`;
+            bit.style.top = `${42 + Math.random() * 12}vh`;
+            bit.style.background = colors[index % colors.length];
+            bit.style.setProperty('--x', `${Math.cos(angle) * distance}px`);
+            bit.style.setProperty('--y', `${Math.sin(angle) * distance}px`);
+            document.body.appendChild(bit);
+            setTimeout(() => bit.remove(), 1000);
+          }
+        }
+
+        $('#message').addEventListener('input', (event) => { $('#count').textContent = `${event.target.value.length} / 90`; });
+        $('#bid-form').addEventListener('submit', (event) => {
+          event.preventDefault();
+          const name = $('#name').value.trim();
+          const line = $('#message').value.trim();
+          const email = $('#email').value.trim();
+          const bid = Number.parseInt($('#amount').value, 10);
+          const message = $('#form-message');
+          if (!name) { message.textContent = 'Add a name or link first.'; $('#name').focus(); return; }
+          if (!email || !email.includes('@')) { message.textContent = 'Add the email for your winner checkout.'; $('#email').focus(); return; }
+          if (!Number.isInteger(bid)) { message.textContent = 'Enter a whole-dollar bid.'; $('#amount').focus(); return; }
+          if (bid <= state.lead.bid) { message.textContent = `Bid ${money(state.lead.bid + 1)} or more to take the lead.`; $('#amount').focus(); return; }
+          message.textContent = '';
+          showConfirmation({ name, line: line || 'No message supplied.', email, bid });
+        });
+        $('#confirm-bid').addEventListener('click', () => {
+          $('#confirmation').close();
+        });
+        $('#confirmation').addEventListener('click', (event) => {
+          if (event.target === event.currentTarget) event.currentTarget.close();
+        });
+        $('#demo-speed').addEventListener('click', () => {
+          state.shortMode = !state.shortMode;
+          state.endsAt = Date.now() + (state.shortMode ? 60000 : 1800000);
+          $('#demo-speed').textContent = state.shortMode ? 'Use real-hour clock' : 'Fast-forward 1 hour';
+          $('#form-message').textContent = state.shortMode ? 'Demo mode on: this hour will roll over in 60 seconds.' : 'Back to a real-hour clock.';
+          updateClock();
+        });
+        setInterval(() => {
+          updateClock();
+          if (Math.random() < .025) {
+            const watchers = 36 + Math.floor(Math.random() * 43);
+            $('#watchers').textContent = `${watchers} watching`;
+            $('#crowd-watchers').textContent = watchers;
+          }
+        }, 500);
+        renderOwner(); renderLead(); renderArchive(); updateClock();
+      })();
+    </script>
+  </body>
+</html>
