@@ -275,6 +275,27 @@ $('message')?.addEventListener('input', (event) => {
 });
 
 /**
+ * Opening the form.
+ *
+ * The fields live in a dialog rather than on the page: everything a visitor
+ * needs to decide -- who is on air, who is next, what it costs to jump the
+ * front -- fits above the fold without a form competing for attention, and the
+ * form only appears once they have decided to buy.
+ */
+function openBuy() {
+  setText($('form-message'), '');
+  $('buy').showModal();
+  $('name').focus();
+}
+
+$('open-buy')?.addEventListener('click', openBuy);
+$('buy-cancel')?.addEventListener('click', () => $('buy').close());
+// Clicking the backdrop, but not the card itself, dismisses it.
+$('buy')?.addEventListener('click', (event) => {
+  if (event.target === event.currentTarget) event.currentTarget.close();
+});
+
+/**
  * Buy a slot.
  *
  * On success the server has recorded the purchase and opened a Polar checkout,
