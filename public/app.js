@@ -83,7 +83,6 @@ async function api(path, options = {}) {
 function renderOwner(data) {
   const { currentHour } = data;
   setText($('current-label'), `Hour ${currentHour.id}`);
-  setText($('next-label'), `Hour ${data.nextHour.id}`);
 
   const owner = currentHour.owner;
   if (owner) {
@@ -272,6 +271,90 @@ async function loadAccount() {
 
 $('message')?.addEventListener('input', (event) => {
   setText($('count'), `${event.target.value.length} / 90`);
+});
+
+/**
+ * Logo picking.
+ *
+ * The image is squared and shrunk to a small canvas here, in the browser,
+ * before it is ever sent: it keeps a 4MB phone photo from becoming a 4MB
+ * request, and it means what the server stores is bounded by construction
+ * rather than by hoping the buyer picked a sensible file. The server still
+ * re-validates the bytes -- this is a convenience, not a trust boundary.
+ *
+ * Leaving it empty is the normal path: the server fetches the icon for the
+ * link instead. This only exists to override that.
+ */
+const LOGO_PX = 96;
+const LOGO_MAX_CHARS = 32_768;
+let logoDataUrl = null;
+
+async function squareToDataUrl(file) {
+  const bitmap = await createImageBitmap(file);
+  const canvas = document.createElement('canvas');
+  canvas.width = LOGO_PX;
+  canvas.height = LOGO_PX;
+  const context = canvas.getContext('2d');
+  // Centre-crop to a square so nothing is stretched out of proportion.
+  const side = Math.min(bitmap.width, bitmap.height);
+  const sx = (bitmap.width - side) / 2;
+  const sy = (bitmap.height - side) / 2;
+  context.drawImage(bitmap, sx, sy, side, side, 0, 0, LOGO_PX, LOGO_PX);
+  bitmap.close?.();
+
+  // WebP where it is supported, PNG otherwise. toDataURL silently falls back
+  // to PNG for an unknown type, so check what actually came back.
+  for (const [type, quality] of [['image/webp', 0.85], ['image/png', undefined]]) {
+    const url = canvas.toDataURL(type, quality);
+    if (url.startsWith(`data:${type};base64,`) && url.length <= LOGO_MAX_CHARS) return url;
+  }
+  return null;
+}
+
+function clearLogo() {
+  logoDataUrl = null;
+  $('logo').value = '';
+  $('logo-preview').removeAttribute('src');
+  $('logo-preview').hidden = true;
+  $('logo-placeholder').hidden = false;
+  $('logo-clear').hidden = true;
+}
+
+$('logo')?.addEventListener('change', async (event) => {
+  const file = event.target.files?.[0];
+  const note = $('logo-note');
+  if (!file) {
+    clearLogo();
+    return;
+  }
+  // Reject the obviously-too-big before decoding it into memory.
+  if (file.size > 8_000_000) {
+    clearLogo();
+    setText(note, 'That image is too large. Pick one under 8MB.');
+    return;
+  }
+  try {
+    const url = await squareToDataUrl(file);
+    if (!url) {
+      clearLogo();
+      setText(note, 'That image could not be shrunk small enough.');
+      return;
+    }
+    logoDataUrl = url;
+    $('logo-preview').src = url;
+    $('logo-preview').hidden = false;
+    $('logo-placeholder').hidden = true;
+    $('logo-clear').hidden = false;
+    setText(note, 'Looks good.');
+  } catch {
+    clearLogo();
+    setText(note, 'That file could not be read as an image.');
+  }
+});
+
+$('logo-clear')?.addEventListener('click', () => {
+  clearLogo();
+  setText($('logo-note'), "We'll use your site's icon if you skip this.");
 });
 
 /**

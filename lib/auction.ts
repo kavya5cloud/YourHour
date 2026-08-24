@@ -117,12 +117,6 @@ export interface PublicState {
   queue: Array<{ position: number; name: string; amountCents: number }>;
   /** What a purchase must beat to go straight to the front. */
   frontOfQueueCents: number;
-  nextHour: {
-    id: number;
-    startsAt: string;
-    lead: { name: string; amountCents: number } | null;
-    minBidCents: number;
-  };
   archive: Array<{ hour: number; name: string; amountCents: number }>;
   totals: { hoursSold: number; raisedCents: number; charityCents: number; highestCents: number };
 }
@@ -141,9 +135,8 @@ export async function getPublicState(): Promise<PublicState> {
   const frontOfQueueCents = (queue[0]?.amountCents ?? 0) + env.auction.minIncrementCents;
   const now = Date.now();
   const currentId = hourIdAt(now);
-  const nextId = currentId + 1;
 
-  const [current, lead, archive, totals] = await Promise.all([
+  const [current, archive, totals] = await Promise.all([
     query<{
       status: string;
       ends_at: Date;
@@ -159,14 +152,6 @@ export async function getPublicState(): Promise<PublicState> {
          LEFT JOIN bids b ON b.id = h.winning_bid_id
         WHERE h.id = $1`,
       [currentId],
-    ),
-    query<{ display_name: string; amount_cents: number; moderation: string }>(
-      `SELECT display_name, amount_cents, moderation
-         FROM bids
-        WHERE hour_id = $1 AND status = 'active'
-        ORDER BY amount_cents DESC, created_at ASC
-        LIMIT 1`,
-      [nextId],
     ),
     query<{ id: number; display_name: string; amount_cents: number; moderation: string }>(
       `SELECT h.id, b.display_name, b.amount_cents, b.moderation
@@ -187,7 +172,6 @@ export async function getPublicState(): Promise<PublicState> {
   ]);
 
   const currentRow = current.rows[0];
-  const leadRow = lead.rows[0];
   const raisedCents = Number.parseInt(totals.rows[0]?.raised ?? '0', 10) || 0;
 
   // Unreviewed text never reaches a visitor verbatim.
@@ -212,16 +196,6 @@ export async function getPublicState(): Promise<PublicState> {
               paidCents: currentRow.amount_cents ?? 0,
             }
           : null,
-    },
-    nextHour: {
-      id: nextId,
-      startsAt: hourStartsAt(nextId).toISOString(),
-      lead: leadRow
-        ? { name: display(leadRow.display_name, leadRow.moderation), amountCents: leadRow.amount_cents }
-        : null,
-      minBidCents: leadRow
-        ? leadRow.amount_cents + env.auction.minIncrementCents
-        : env.auction.minBidCents,
     },
     archive: archive.rows.map((row) => ({
       hour: row.id,

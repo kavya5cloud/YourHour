@@ -270,22 +270,13 @@ async function getPublicState() {
   const frontOfQueueCents = (queue[0]?.amountCents ?? 0) + env.auction.minIncrementCents;
   const now = Date.now();
   const currentId = hourIdAt(now);
-  const nextId = currentId + 1;
-  const [current, lead, archive, totals] = await Promise.all([
+  const [current, archive, totals] = await Promise.all([
     query(
       `SELECT h.status, h.ends_at, b.display_name, b.tagline, b.link_url, b.logo_data_url, b.amount_cents, b.moderation
          FROM hours h
          LEFT JOIN bids b ON b.id = h.winning_bid_id
         WHERE h.id = $1`,
       [currentId]
-    ),
-    query(
-      `SELECT display_name, amount_cents, moderation
-         FROM bids
-        WHERE hour_id = $1 AND status = 'active'
-        ORDER BY amount_cents DESC, created_at ASC
-        LIMIT 1`,
-      [nextId]
     ),
     query(
       `SELECT h.id, b.display_name, b.amount_cents, b.moderation
@@ -305,7 +296,6 @@ async function getPublicState() {
     )
   ]);
   const currentRow = current.rows[0];
-  const leadRow = lead.rows[0];
   const raisedCents = Number.parseInt(totals.rows[0]?.raised ?? "0", 10) || 0;
   const display = (value, moderation) => moderation === "approved" ? value ?? "" : UNDER_REVIEW;
   return {
@@ -323,12 +313,6 @@ async function getPublicState() {
         logo: currentRow.moderation === "approved" ? currentRow.logo_data_url : null,
         paidCents: currentRow.amount_cents ?? 0
       } : null
-    },
-    nextHour: {
-      id: nextId,
-      startsAt: hourStartsAt(nextId).toISOString(),
-      lead: leadRow ? { name: display(leadRow.display_name, leadRow.moderation), amountCents: leadRow.amount_cents } : null,
-      minBidCents: leadRow ? leadRow.amount_cents + env.auction.minIncrementCents : env.auction.minBidCents
     },
     archive: archive.rows.map((row) => ({
       hour: row.id,
