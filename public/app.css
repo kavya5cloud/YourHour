@@ -73,6 +73,16 @@ button { -webkit-tap-highlight-color: transparent; }
   height: auto;
 }
 
+/* The buying form lives in a dialog, so it needs to scroll on short screens. */
+#buy .dialog-inner {
+  display: grid;
+  gap: 10px;
+  max-height: min(86vh, 720px);
+  overflow-y: auto;
+}
+#buy .dialog-actions { margin-top: 4px; }
+#open-buy { width: 100%; }
+
 /* ------------------------------------------------------------------- queue */
 .queue {
   display: grid;

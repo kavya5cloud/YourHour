@@ -60,29 +60,9 @@
                  takes whoever is at the front. -->
             <div class="queue" id="queue" aria-live="polite"></div>
 
-            <form id="claim-form">
-              <div class="field"><label for="name">Product</label><input id="name" name="name" maxlength="24" placeholder="yoursite.com" autocomplete="off" required /></div>
-              <div class="field"><label for="link">Link</label><input id="link" name="link" maxlength="200" placeholder="https://yoursite.com" autocomplete="off" inputmode="url" required /></div>
-              <div class="field"><label for="message">Tagline <span class="count" id="count">0 / 90</span></label><input id="message" name="message" maxlength="90" placeholder="Say the thing." autocomplete="off" /></div>
-              <div class="field">
-                <label for="logo">Logo <span class="count">optional</span></label>
-                <div class="logo-field">
-                  <img class="logo-preview" id="logo-preview" alt="" hidden />
-                  <span class="logo-placeholder" id="logo-placeholder" aria-hidden="true">✦</span>
-                  <input id="logo" name="logo" type="file" accept="image/png,image/jpeg,image/webp" />
-                  <button class="logo-clear" id="logo-clear" type="button" hidden>Remove</button>
-                </div>
-                <p class="logo-note" id="logo-note">We&rsquo;ll use your site&rsquo;s icon if you skip this.</p>
-              </div>
-              <div class="field"><label for="email">Email</label><input id="email" name="email" type="email" maxlength="254" placeholder="you@example.com" autocomplete="email" required /></div>
-              <div class="bid-row">
-                <div class="field"><label for="amount">Amount <span class="count" id="front-hint"></span></label><input id="amount" name="amount" inputmode="numeric" autocomplete="off" placeholder="50" required /></div>
-                <button class="claim" id="claim-submit" type="submit">Pay &amp; get in line</button>
-              </div>
-              <p class="message" id="form-message" role="alert"></p>
-              <p class="rules" id="claim-help"><strong>Everyone who pays gets an hour.</strong> Pay more, go sooner. Your slot can drift later, and locks when your hour starts.</p>
-              <p class="charity-note">♡ <strong>50% of net proceeds goes to charity.</strong></p>
-            </form>
+            <button class="claim" id="open-buy" type="button">Pay &amp; get in line</button>
+            <p class="rules" id="claim-help"><strong>Everyone who pays gets an hour.</strong> Pay more, go sooner. Your slot can drift later, and locks when your hour starts.</p>
+            <p class="charity-note">♡ <strong>50% of net proceeds goes to charity.</strong></p>
           </section>
 
           <section aria-labelledby="archive-title">
@@ -102,6 +82,34 @@
     <!-- Step two. Only shown to a bidder we cannot already reach: the address is
          asked for at the moment it has an obvious purpose, rather than sitting
          in front of the bid form as a toll. -->
+
+    <dialog id="buy" aria-labelledby="buy-title">
+      <form class="dialog-inner" id="claim-form">
+        <span class="dialog-kicker">Get in line</span>
+        <h2 id="buy-title">Your hour</h2>
+        <p id="buy-sub">Pay what you like. The more you pay, the sooner you air.</p>
+        <div class="field"><label for="name">Product</label><input id="name" name="name" maxlength="24" placeholder="yoursite.com" autocomplete="off" required /></div>
+        <div class="field"><label for="link">Link</label><input id="link" name="link" maxlength="200" placeholder="https://yoursite.com" autocomplete="off" inputmode="url" required /></div>
+        <div class="field"><label for="message">Tagline <span class="count" id="count">0 / 90</span></label><input id="message" name="message" maxlength="90" placeholder="Say the thing." autocomplete="off" /></div>
+        <div class="field">
+          <label for="logo">Logo <span class="count">optional</span></label>
+          <div class="logo-field">
+            <img class="logo-preview" id="logo-preview" alt="" hidden />
+            <span class="logo-placeholder" id="logo-placeholder" aria-hidden="true">✦</span>
+            <input id="logo" name="logo" type="file" accept="image/png,image/jpeg,image/webp" />
+            <button class="logo-clear" id="logo-clear" type="button" hidden>Remove</button>
+          </div>
+          <p class="logo-note" id="logo-note">We&rsquo;ll use your site&rsquo;s icon if you skip this.</p>
+        </div>
+        <div class="field"><label for="email">Email</label><input id="email" name="email" type="email" maxlength="254" placeholder="you@example.com" autocomplete="email" required /></div>
+        <div class="field"><label for="amount">Amount <span class="count" id="front-hint"></span></label><input id="amount" name="amount" inputmode="numeric" autocomplete="off" placeholder="50" required /></div>
+        <p class="message" id="form-message" role="alert"></p>
+        <div class="dialog-actions">
+          <button type="button" class="close" id="buy-cancel">Back</button>
+          <button type="submit" id="claim-submit">Pay</button>
+        </div>
+      </form>
+    </dialog>
 
   </body>
 </html>
